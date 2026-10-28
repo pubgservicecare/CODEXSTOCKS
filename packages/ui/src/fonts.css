@@ -1,0 +1,8 @@
+/* Self-hosted Inter (SIL OFL 1.1, see assets/fonts/Inter-OFL-LICENSE.txt). No external font requests. */
+@font-face {
+  font-family: "Inter Var";
+  src: url("../assets/fonts/InterVariable-latin.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}

@@ -1,0 +1,36 @@
+# dependencies
+node_modules/
+
+# builds
+dist/
+build/
+.next/
+out/
+apps/desktop/src-tauri/target/
+apps/desktop/src-tauri/gen/schemas/
+*.tsbuildinfo
+coverage/
+
+# secrets — never commit real credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.cxbackup
+recovery-key*.txt
+
+# local data
+*.sqlite
+*.sqlite3
+*.db
+.vercel/
+
+# os / editor
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/extensions.json
+
+# release artifacts
+release/
