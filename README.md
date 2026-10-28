@@ -46,14 +46,11 @@ npm run desktop:build   # -> release\CODE-X-STOCKS-Setup-x64.exe (also apps\desk
 npm run web:build
 ```
 
-## Production setup (summary)
+## Production setup
 
-1. Put secrets in `apps/web/.env.local` (local) and in Vercel → Settings → Environment Variables (see `.env.example`).
-2. `npm run db:status` then `npm run db:migrate` (forward-only, never destructive).
-3. Deploy `apps/web` to Vercel; add `codexstocks.org` and `admin.codexstocks.org` domains; set DNS records.
-4. Install the desktop app → "First PC — create my cloud account" → enter the server setup code.
-
-Full details: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). Current status: [CODEX_STOCKS_PROGRESS.md](CODEX_STOCKS_PROGRESS.md).
+Follow the [verified Vercel deployment guide](docs/VERCEL_DEPLOYMENT_GUIDE.md) for project settings,
+environment variables, the safe Neon migration sequence, domain routing, owner initialization,
+ImageKit smoke tests, and rollback. Current status: [CODEX_STOCKS_PROGRESS.md](CODEX_STOCKS_PROGRESS.md).
 
 ## Documentation
 
@@ -65,7 +62,7 @@ Full details: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). Current status: [CODEX_S
 - [Database migrations](docs/DATABASE_MIGRATIONS.md)
 - [Testing](docs/TESTING.md)
 - [Release checklist (desktop)](docs/RELEASE.md)
-- [Deployment & domains](docs/DEPLOYMENT.md)
+- [Vercel deployment & domains](docs/VERCEL_DEPLOYMENT_GUIDE.md)
 - [Production readiness preflight](docs/PRODUCTION_PREFLIGHT.md)
 - [Backup & restore](docs/BACKUP_RESTORE.md)
 

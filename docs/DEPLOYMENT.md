@@ -1,4 +1,9 @@
-# Deployment (Vercel + Neon + ImageKit + domains)
+# Deployment (legacy checklist)
+
+> **Use the current [Vercel deployment guide](./VERCEL_DEPLOYMENT_GUIDE.md) instead.** It verifies
+> current project settings, safe Neon migration steps, host routing, environment variables, and
+> owner/ImageKit procedures. In particular, `npm run db:status` creates `schema_migrations` if absent;
+> it is not a read-only production check. The checklist below is retained as historical reference.
 
 Never paste secrets into chat, commits or docs. Put them only where listed below.
 

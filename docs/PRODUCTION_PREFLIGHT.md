@@ -4,6 +4,10 @@ Inspection date: 2026-10-28 · Scope: **inspect and report only**. Nothing was d
 `db:status` was run, no DNS was touched, no production data or secrets were accessed. No secret values
 appear in this document.
 
+> This is a point-in-time preflight report, not the current deployment checklist. Use
+> [VERCEL_DEPLOYMENT_GUIDE.md](./VERCEL_DEPLOYMENT_GUIDE.md) for the latest repository state and
+> Vercel/Neon instructions; some environment, Git, and runtime observations below may be stale.
+
 Legend: ✅ verified now (by reading code or running a check) · ⚠ risk / action needed · ⛔ blocker · ❔ not verified
 
 ---
