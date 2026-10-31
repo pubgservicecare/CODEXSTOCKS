@@ -2,7 +2,27 @@
 
 Legend: ✅ VERIFIED · 🟡 IMPLEMENTED, NOT VERIFIED · ⛔ BLOCKED
 
-Last update: 2026-10-28 (dev PC: Windows 10 Pro 22H2 build 19045)
+Last update: 2026-10-30 (dev PC: Windows 10 Pro 22H2 build 19045)
+
+## Dual currency + USD/PKR rates + combined charts — see docs/FX.md (2026-10-31, not committed/deployed)
+- ✅ Provider ExchangeRate-API open access (daily, commercial use with attribution); real connection verified through `/api/v1/fx`.
+- ✅ Server cache (6 h refresh, 30 min retry pause, stale fallback, validation). Storefront PKR/USD by country + switcher.
+- ✅ Transaction-time snapshots on purchases/sales/expenses (manual sale rate needs a reason); combined PKR books; PKR/USD charts from one series.
+- ⚠ Needs production migration **0002_fx_snapshots** (additive) BEFORE deploying this code — owner approval required; not run.
+- ✅ Tests 156 passed (45 new). Typecheck clean. Web production build OK. Browser QA on a local production build (demo data).
+- ⚠ Desktop installer not rebuilt after this change (1.0.3 installer predates it).
+
+## Final feature update (desktop 1.0.3 + website) — see docs/RELEASE_1.0.3.md
+- ✅ Single-owner login: every fresh install shows **Owner sign in** (+ Restore encrypted backup only). Server closes setup
+  once the owner exists (409 before the token is checked; status `setup_enabled:false`), throttles setup-code guesses.
+- ✅ Photo in the Add Account form (preview/change/remove/drag-drop/validation); desktop queues offline; web uploads with retry.
+- ✅ Mark as Sold with actual amount + currency, review + CONFIRM SALE, on account page, inventory cards and list rows.
+  `recordSale` now reports a resubmitted sale as "already recorded" (check order only; no schema change).
+- ✅ Phone layouts: storefront menu + sticky WhatsApp bar; admin drawer, bottom tab bar, bottom-sheet dialogs, tables as cards.
+  👁 Browser device emulation only (Chromium) at 320–1440 px; **no physical phone tested**.
+- ✅ Tests 111 passed (29 new). Typecheck clean. Web production build OK. No migration, no deploy, no production data touched.
+- ⚠ Production `GET /api/v1/auth/status` (2026-10-30): `owner_exists:true, setup_enabled:true` → `SETUP_TOKEN` is still set in
+  Vercel Production. Owner must remove it and redeploy (after deploying this code, setup is closed regardless).
 
 ## Production preflight (inspection only) — see docs/PRODUCTION_PREFLIGHT.md
 - 2026-10-28: tests 82/82 and typecheck re-run during inspection (pass). No deploy, migration, `db:status`, DNS or data change.

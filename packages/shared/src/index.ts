@@ -1,5 +1,6 @@
 export * from "./ids";
 export * from "./money";
+export * from "./fx";
 export * from "./text";
 export * from "./entities";
 export * from "./rules";

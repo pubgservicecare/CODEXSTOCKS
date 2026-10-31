@@ -26,6 +26,9 @@ import {
 } from "@codex/crypto";
 import {
   computeReport,
+  fxStatus,
+  isValidUsdPkrMicro,
+  type FxQuote,
   ENTITIES,
   ENTITY_SCHEMAS,
   firstIssue,
@@ -202,6 +205,26 @@ export class AppCore {
 
   private runIn(q: Q, name: CommandName, args: unknown) {
     return runCommand(new LocalEntityStore(q, this.actor(), () => this.now()), name, args);
+  }
+
+  /**
+   * USD/PKR quote for conversions and transaction snapshots. Online: fetched from the server (which
+   * caches the provider's daily rate) and remembered locally. Offline: the remembered quote, with its
+   * status recomputed from its age — never a made-up value. Null if this PC has never received one.
+   */
+  async fxQuote(): Promise<FxQuote | null> {
+    const base = this.cloud?.api_base ?? (await this.prefs()).api_base;
+    try {
+      const { quote } = await this.client(base).fx();
+      if (quote && isValidUsdPkrMicro(quote.usd_pkr_micro)) {
+        await kvSet(this.db, "fx", quote);
+        return { ...quote, status: fxStatus(quote, this.now()) };
+      }
+    } catch {
+      /* offline or server unavailable: use the cached quote */
+    }
+    const cached = await kvGet<FxQuote>(this.db, "fx");
+    return cached && isValidUsdPkrMicro(cached.usd_pkr_micro) ? { ...cached, status: fxStatus(cached, this.now()) } : null;
   }
 
   async prefs(): Promise<Prefs> {

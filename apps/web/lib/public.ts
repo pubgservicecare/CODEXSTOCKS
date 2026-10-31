@@ -5,7 +5,7 @@ import type { PublicListing, PublicSettings } from "@codex/shared";
 import { getDb } from "./server";
 
 /** Storefront data access: ONLY the explicit public DTOs (allowlisted fields). */
-export async function listings(opts: { q?: string; currency?: string; sort?: string }): Promise<PublicListing[]> {
+export async function listings(opts: { q?: string; currency?: string; sort?: string; usdPkrMicro?: number | null }): Promise<PublicListing[]> {
   return queryPublicListings(await getDb(), opts);
 }
 

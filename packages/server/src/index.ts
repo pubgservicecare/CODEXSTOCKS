@@ -6,3 +6,4 @@ export * from "./sync";
 export * from "./api";
 export * from "./imagekit";
 export * from "./config";
+export * from "./fx";

@@ -19,6 +19,7 @@ Bump the version in `tauri.conf.json`, `apps/desktop/package.json` and `src-taur
 
 | Version | SHA-256 | Notes |
 |---|---|---|
+| 1.0.3 | `577B0E678B2D766FA53C4B1309C3860AD8CBA8ADF78BC181BD579EFF71D5360E` | Owner-only sign-in, photo in Add Account, Mark as Sold, phone layouts. No data or schema changes. See RELEASE_1.0.3.md. Upgrade on a real install not yet verified. |
 | 1.0.2 | `8D94C09546C9C3E3AFD490F6B4F6AB47F88F321F29BF8866D804F0DA5EF0735A` | Visual redesign (shared UI, artwork, new app icon). No data or schema changes. |
 | 1.0.1 | `A64C3E78A30D98439D78B575FB0EA41A9874914FEA2074FE27A82A61A23FE05A` | Parity release: History page, complete account history, conflict-snapshot fix |
 | 1.0.0 | `24C54FDB66917CBC70D38227474B0DCD0B2BC2D393DEA284FCB8C5C297CF8372` | First build. File no longer kept (overwritten during the 1.0.1 work); rebuildable from source. |

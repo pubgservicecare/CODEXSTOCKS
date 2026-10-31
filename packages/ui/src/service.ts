@@ -10,6 +10,7 @@ import type {
   Entity,
   EntityRowMap,
   FinancialReport,
+  FxQuote,
 } from "@codex/shared";
 
 export type AccountListItem = Account & { link_count: number; sync_state?: string };
@@ -75,6 +76,8 @@ export interface DataService {
   /** Newest audit events, or every event concerning one account when `accountId` is given. */
   audit(accountId?: string): Promise<AuditEvent[]>;
   exec<T = unknown>(name: CommandName, args: unknown): Promise<T>;
+  /** Latest USD/PKR reference quote (desktop: cached for offline use), or null if none is available. */
+  fx(): Promise<FxQuote | null>;
 
   vaultUnlocked(): boolean;
   hasVault(): Promise<boolean>;
@@ -90,6 +93,8 @@ export interface DataService {
   removeImage(accountId: string): Promise<void>;
   /** Object URL of a local (queued/cached) image, desktop only. */
   localImage?(accountId: string): Promise<{ url: string; status: string; error: string | null } | null>;
+  /** Retry a failed queued upload now instead of waiting for the automatic retry (desktop only). */
+  retryImage?(accountId: string): Promise<void>;
 
   syncStatus?(): Promise<SyncSummary>;
   syncNow?(): Promise<void>;

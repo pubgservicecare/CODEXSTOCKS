@@ -1,6 +1,6 @@
 [package]
 name = "codex-stocks"
-version = "1.0.2"
+version = "1.0.4"
 description = "CODE X STOCKS - PUBG account inventory"
 authors = ["CODE X STOCKS"]
 edition = "2021"

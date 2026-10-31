@@ -98,7 +98,7 @@ async function audit(
 export const ACCOUNT_EDITABLE = [
   "title", "purchase_cost_minor", "purchase_currency", "purchased_at", "purchase_reference", "list_price_minor",
   "list_currency", "description_public", "youtube_url", "old_owner_name", "old_owner_whatsapp",
-  "show_old_owner_public", "internal_notes",
+  "show_old_owner_public", "internal_notes", "purchase_fx_micro", "purchase_fx_source", "purchase_fx_at",
 ] as const satisfies readonly (keyof Account)[];
 export type AccountInput = Patch<Pick<Account, (typeof ACCOUNT_EDITABLE)[number]>>;
 
@@ -125,6 +125,9 @@ function newAccountRow(store: EntityStore, id: string | undefined, input: Accoun
     old_owner_whatsapp: null,
     show_old_owner_public: false,
     internal_notes: "",
+    purchase_fx_micro: null,
+    purchase_fx_source: null,
+    purchase_fx_at: null,
     ...pick<Account>(input as Record<string, unknown>, ACCOUNT_EDITABLE),
   };
 }
@@ -170,6 +173,7 @@ export async function createAccount(
   await audit(store, "accounts", account.id, "account.created", {
     purchase_cost_minor: account.purchase_cost_minor,
     purchase_currency: account.purchase_currency,
+    ...(account.purchase_fx_micro ? { usd_pkr_micro: account.purchase_fx_micro, fx_source: account.purchase_fx_source, fx_at: account.purchase_fx_at } : {}),
   });
   return account;
 }
@@ -186,6 +190,13 @@ export async function updateAccount(
     await audit(store, "accounts", saved.id, "account.purchase_changed", {
       from: { amount: prev.purchase_cost_minor, currency: prev.purchase_currency },
       to: { amount: saved.purchase_cost_minor, currency: saved.purchase_currency },
+    });
+  if (prev.purchase_fx_micro !== saved.purchase_fx_micro)
+    await audit(store, "accounts", saved.id, "account.purchase_fx_changed", {
+      from: prev.purchase_fx_micro,
+      to: saved.purchase_fx_micro,
+      fx_source: saved.purchase_fx_source,
+      fx_at: saved.purchase_fx_at,
     });
   if (prev.list_price_minor !== saved.list_price_minor || prev.list_currency !== saved.list_currency)
     await audit(store, "accounts", saved.id, "account.list_price_changed", {
@@ -424,13 +435,15 @@ export async function deleteBackupSet(store: EntityStore, args: { id: string }):
 export type SaleInput = Pick<
   Sale,
   "account_id" | "sold_at" | "amount_minor" | "currency" | "exchange_rate_micro" | "buyer_name" | "buyer_contact" | "channel" | "reference" | "notes"
-> & { id?: string };
+> &
+  Partial<Pick<Sale, "fx_usd_pkr_micro" | "fx_source" | "fx_at" | "fx_override_reason">> & { id?: string };
 
 export async function recordSale(store: EntityStore, args: SaleInput): Promise<Sale> {
+  // Checked first: a resubmitted sale (double tap, lost response) is reported as already recorded.
+  if (args.id && (await store.get("sales", args.id))) throw new RuleError("exists", "Sale already recorded");
   const acct = await load(store, "accounts", args.account_id, "Account");
   if (acct.status !== "available" && acct.status !== "reserved")
     throw new RuleError("sale_status", `Cannot sell an account that is ${acct.status}`);
-  if (args.id && (await store.get("sales", args.id))) throw new RuleError("exists", "Sale already recorded");
   const sale = await write(
     store,
     "sales",
@@ -447,6 +460,10 @@ export async function recordSale(store: EntityStore, args: SaleInput): Promise<S
       reference: args.reference ?? null,
       notes: args.notes ?? null,
       status: "completed",
+      fx_usd_pkr_micro: args.fx_usd_pkr_micro ?? null,
+      fx_source: args.fx_usd_pkr_micro ? (args.fx_source ?? null) : null,
+      fx_at: args.fx_usd_pkr_micro ? (args.fx_at ?? null) : null,
+      fx_override_reason: args.fx_usd_pkr_micro ? (args.fx_override_reason?.trim() || null) : null,
     },
     null,
   );
@@ -456,6 +473,10 @@ export async function recordSale(store: EntityStore, args: SaleInput): Promise<S
     amount_minor: sale.amount_minor,
     currency: sale.currency,
     exchange_rate_micro: sale.exchange_rate_micro,
+    usd_pkr_micro: sale.fx_usd_pkr_micro,
+    fx_source: sale.fx_source,
+    fx_at: sale.fx_at,
+    ...(sale.fx_override_reason ? { fx_override_reason: sale.fx_override_reason } : {}),
   });
   return sale;
 }
@@ -519,7 +540,8 @@ export async function recordRefund(
   return refund;
 }
 
-export type ExpenseInput = Pick<Expense, "incurred_at" | "amount_minor" | "currency" | "category" | "description" | "account_id" | "sale_id">;
+export type ExpenseInput = Pick<Expense, "incurred_at" | "amount_minor" | "currency" | "category" | "description" | "account_id" | "sale_id"> &
+  Partial<Pick<Expense, "fx_usd_pkr_micro" | "fx_source" | "fx_at">>;
 
 export async function saveExpense(
   store: EntityStore,
@@ -537,6 +559,10 @@ export async function saveExpense(
     description: e.description ?? "",
     account_id: e.account_id ?? null,
     sale_id: e.sale_id ?? null,
+    // An edit that does not send a snapshot keeps the one recorded originally.
+    fx_usd_pkr_micro: e.fx_usd_pkr_micro !== undefined ? e.fx_usd_pkr_micro : (prev?.fx_usd_pkr_micro ?? null),
+    fx_source: e.fx_usd_pkr_micro !== undefined ? (e.fx_source ?? null) : (prev?.fx_source ?? null),
+    fx_at: e.fx_usd_pkr_micro !== undefined ? (e.fx_at ?? null) : (prev?.fx_at ?? null),
   };
   const next = prev ? { ...prev, ...fields, updated_at: store.now() } : { ...metaFor(store, args.id), ...fields };
   const saved = await write(store, "expenses", next, prev);
@@ -545,6 +571,7 @@ export async function saveExpense(
     to: { amount: saved.amount_minor, currency: saved.currency },
     category: saved.category,
     account_id: saved.account_id,
+    usd_pkr_micro: saved.fx_usd_pkr_micro,
   });
   return saved;
 }

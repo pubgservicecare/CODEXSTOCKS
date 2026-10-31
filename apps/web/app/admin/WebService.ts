@@ -13,6 +13,7 @@ import {
 import { backupSetArgs, revealBackupCode, revealCredential, sharedPasswordArgs } from "@codex/local-core/secrets";
 import { exportCloudBackup } from "@codex/local-core/cloud-backup";
 import {
+  fxStatus,
   IMAGE_EXT,
   MAX_IMAGE_BYTES,
   newId,
@@ -128,6 +129,11 @@ export function webService(username: string, opts: WebServiceOptions = {}): Data
       const r = await api.command(name, args);
       emit();
       return r as never;
+    },
+
+    async fx() {
+      const { quote } = await api.fx().catch(() => ({ quote: null }));
+      return quote ? { ...quote, status: fxStatus(quote, new Date()) } : null;
     },
 
     vaultUnlocked: () => !!key,

@@ -69,7 +69,7 @@ function CloudCard() {
   const { svc, requireVault } = useApp();
   const { busy, run } = useAction();
   const { data, reload } = useLoad(() => (svc.cloudInfo ? svc.cloudInfo() : Promise.resolve(null)), []);
-  const [f, setF] = useState({ apiBase: "", username: svc.username() ?? "", password: "", setupToken: "", cloudVaultPassphrase: "" });
+  const [f, setF] = useState({ apiBase: "", username: svc.username() ?? "", password: "", cloudVaultPassphrase: "" });
   useEffect(() => {
     if (data) setF((x) => ({ ...x, apiBase: x.apiBase || data.apiBase }));
   }, [data]);
@@ -86,14 +86,13 @@ function CloudCard() {
     <div className="card">
       <div className="card-head"><span className="icon-tile"><Icon name="cloudOff" size={16} /></span><h2>Connect to cloud</h2><span className="badge">Local only</span></div>
       <p className="muted small">
-        Pair this PC with your cloud account. Your local inventory is uploaded with its existing IDs (no duplicates). If the cloud already
+        Sign in with your existing cloud owner account to authorise this PC. Your local inventory is uploaded with its existing IDs (no duplicates). If the cloud already
         has a credential vault, enter its passphrase so local secrets can be re-encrypted under it.
       </p>
       <div className="form-grid">
         <Field label="Server URL"><input value={f.apiBase} onChange={(e) => setF({ ...f, apiBase: e.target.value })} /></Field>
-        <Field label="Cloud username"><input value={f.username} onChange={(e) => setF({ ...f, username: e.target.value })} /></Field>
-        <Field label="Cloud password"><input type="password" value={f.password} onChange={(e) => setF({ ...f, password: e.target.value })} /></Field>
-        <Field label="Server setup code" hint="Only if the cloud has no owner yet"><input value={f.setupToken} onChange={(e) => setF({ ...f, setupToken: e.target.value })} /></Field>
+        <Field label="Owner username"><input value={f.username} onChange={(e) => setF({ ...f, username: e.target.value })} autoComplete="username" /></Field>
+        <Field label="Login password"><input type="password" value={f.password} onChange={(e) => setF({ ...f, password: e.target.value })} autoComplete="current-password" /></Field>
         <Field label="Cloud vault passphrase" hint="Only if the cloud already has a vault"><input type="password" value={f.cloudVaultPassphrase} onChange={(e) => setF({ ...f, cloudVaultPassphrase: e.target.value })} /></Field>
       </div>
       <button
@@ -102,13 +101,13 @@ function CloudCard() {
         onClick={async () => {
           if (!(await requireVault())) return;
           await run(
-            () => svc.pairWithCloud!({ ...f, setupToken: f.setupToken || undefined, cloudVaultPassphrase: f.cloudVaultPassphrase || undefined }),
+            () => svc.pairWithCloud!({ ...f, cloudVaultPassphrase: f.cloudVaultPassphrase || undefined }),
             "Connected to the cloud",
           );
           reload();
         }}
       >
-        Connect
+        Sign in &amp; connect
       </button>
     </div>
   );

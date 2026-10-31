@@ -33,6 +33,7 @@ const P: Record<string, string> = {
   copy: "M8 8h12v12H8zM16 8V4H4v12h4",
   check: "M5 12.5l4.5 4.5L19 7.5",
   x: "M6 6l12 12M18 6 6 18",
+  menu: "M4 7h16M4 12h16M4 17h16",
   alert: "M12 3l9.5 17h-19zM12 10v4M12 17.5h.01",
   info: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18ZM12 11v5M12 7.5h.01",
   grid: "M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z",

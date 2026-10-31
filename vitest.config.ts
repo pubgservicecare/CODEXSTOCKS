@@ -8,5 +8,7 @@ export default defineConfig({
     testTimeout: 60_000,
     hookTimeout: 60_000,
     pool: "forks",
+    // Each file starts its own in-memory Postgres (PGlite); unbounded parallel forks can exhaust memory.
+    maxWorkers: 3,
   },
 });

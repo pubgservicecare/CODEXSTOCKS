@@ -29,7 +29,7 @@ Legend: ✅ verified by automated test · 👁 verified in a browser (website) �
 
 ## Desktop-only capabilities (intentional)
 
-`localImage`, `syncNow`, `outboxIssues`, `retryOutbox`, `discardOutbox`, `restoreBackup`, `cloudInfo`,
+`localImage`, `retryImage`, `syncNow`, `outboxIssues`, `retryOutbox`, `discardOutbox`, `restoreBackup`, `cloudInfo`,
 `pairWithCloud` — all concern the PC's own offline database/queue or pairing.
 
 ## Visual redesign (1.0.2) — parity impact
@@ -41,3 +41,31 @@ identical. No `DataService` method, command, business rule or API changed; the p
 passes unchanged. Additions that apply to both: grid/list inventory view (remembered per device), the
 6-month PKR/USD chart (computed from the same recorded sales, refunds, expenses and purchase costs on both),
 recent-activity feed, readable History details. See [DESIGN.md](DESIGN.md).
+
+## Final feature update (desktop 1.0.3) — parity
+
+Same rule as before: one shared screen, one `DataService` contract, one set of commands and one API.
+New rows (legend as above; 📱 = checked in a phone-sized browser via device emulation, not on a physical phone):
+
+| # | Feature | Desktop | Web admin (desktop browser) | Web admin (mobile browser) | Tested |
+|---|---|---|---|---|---|
+| 14 | **Mark as Sold** with actual amount + currency, optional buyer/WhatsApp/date-time/payment ref/notes, review step with cost and expected profit, **CONFIRM SALE** | Account page, inventory cards and list rows; works offline (outbox) | Same screens, same `recordSale` command via API | Same, as a bottom sheet | ✅ desktop offline sale synced once (lost-response retry); ✅ web sale → desktop and desktop sale → web with identical rows and reports; ✅ resubmitted sale = "already recorded"; ✅ second sale of the same account becomes a conflict; 👁📱 demo-mode flow |
+| 15 | **Photo chosen in Add Account** (preview, change, remove, drag-and-drop, validation) | Saved locally and queued; uploads when online; status + Retry now | Uploaded through the server-signed ImageKit flow right after the account is saved; failure keeps the account and offers Retry | Same | ✅ offline queue → upload → attach → public listing; ✅ web upload success, failure + retry (one account), invalid/oversize rejected; 👁📱 failure + retry UI (ImageKit not configured in demo) |
+| 16 | Mobile account editing (photo replace/remove in the edit form too) | Same form | Same form | Phone layout, sticky save bar | 👁📱 |
+| 17 | Mobile financial operations (sales, refunds, expenses, reports) | — | — | Tables become labelled cards; dialogs become bottom sheets | 👁📱 all pages at 320–430 px |
+| 18 | **Unified Owner Login** | Fresh install shows only Owner sign in (+ Restore encrypted backup); no First PC / local-only / setup-code options | Owner sign in | Owner sign in | ✅ render guard (no registration/owner-creation UI); ✅ server refuses a 2nd owner (any token/client) |
+| 19 | Device authorisation | Sign-in enrols the PC (password checked by server); offline first sign-in refused with an honest message; enrolled PC signs in offline | n/a (browser session) | n/a | ✅ enrol + download + vault stays locked; ✅ offline fresh PC cannot sign in; ✅ enrolled PC offline login + later sync |
+| 20 | Mobile sync & conflict handling | — | Sync page, conflict compare/choose | Drawer navigation, conflict diff as cards | 👁📱 |
+
+`retryImage` is desktop-only (it retries the PC's own upload queue).
+
+## Dual currency and exchange rates — parity
+
+| # | Feature | Desktop | Web admin | Tested |
+|---|---|---|---|---|
+| 21 | Conversion previews (Add/Edit price + purchase cost, cards, list, account page) | Quote from the server, cached for offline use | Quote from the server | ✅ preview/equivalent render tests; 👁 browser (web) |
+| 22 | Sale rate: reference pre-filled, manual override with reason, old-cache confirmation | Offline: cached quote, 72 h rule | Online | ✅ resolver tests; ✅ server schema/rule tests; ✅ offline sale keeps its rate through sync |
+| 23 | Purchase/expense snapshots | Same | Same | ✅ |
+| 24 | Combined books + PKR/USD charts from one series | Same shared functions | Same | ✅ identical-movement tests; ✅ both PCs identical books; 👁 identical bar heights in the browser |
+
+`fx` is part of the shared `DataService` contract on both (desktop: cached locally).

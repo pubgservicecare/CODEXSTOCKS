@@ -3,7 +3,8 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Icon } from "@codex/ui/icons";
 import { listing, settings } from "../../../../lib/public";
-import { Description, ListingMedia, Price, WhatsAppButton } from "../../ui";
+import { displayCurrency, storefrontFx } from "../../../../lib/currency";
+import { Description, ListingMedia, Price, RateNote, WhatsAppButton, type PriceView } from "../../ui";
 
 export const dynamic = "force-dynamic";
 
@@ -15,8 +16,9 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
 
 export default async function AccountPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const [l, store] = await Promise.all([listing(id), settings()]);
+  const [l, store, fx, display] = await Promise.all([listing(id), settings(), storefrontFx(), displayCurrency()]);
   if (!l) notFound();
+  const view: PriceView = { display: display.currency, fx };
   const site = process.env.PUBLIC_SITE_URL || "https://codexstocks.org";
   const url = `${site}/accounts/${l.id}`;
   return (
@@ -46,7 +48,8 @@ export default async function AccountPage({ params }: { params: Promise<{ id: st
         <aside className="panel">
           <span className="tag">Available</span>
           <h1>{l.title}</h1>
-          <Price l={l} big />
+          <Price l={l} big view={view} />
+          <RateNote fx={fx} />
           <div className="buy">
             <WhatsAppButton big phone={store.whatsapp} listing={l} url={url} />
           </div>
@@ -64,7 +67,7 @@ export default async function AccountPage({ params }: { params: Promise<{ id: st
         {l.description ? <Description text={l.description} /> : <p className="note">Message us for full details.</p>}
       </section>
       <div className="mobile-buy">
-        <Price l={l} />
+        <Price l={l} view={view} />
         <WhatsAppButton phone={store.whatsapp} listing={l} url={url} label="Enquire" />
       </div>
     </main>

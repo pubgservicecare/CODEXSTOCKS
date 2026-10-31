@@ -5,7 +5,7 @@ import { AdminApp } from "@codex/ui";
 import "@codex/ui/styles.css";
 import { appInfo, tauriDriver, tauriFiles, type AppInfo } from "./platform";
 import { desktopService } from "./DesktopService";
-import { CreateVaultScreen, LoginScreen, RecoveryKeyScreen, SetupWizard, AuthCard } from "./screens";
+import { CreateVaultScreen, LoginScreen, OwnerSignIn, RecoveryKeyScreen, AuthCard } from "./screens";
 
 /** Public build-time value only (no secrets): the default cloud API URL. */
 const DEFAULT_API = (import.meta.env.VITE_API_BASE_URL as string | undefined) || "https://admin.codexstocks.org";
@@ -58,7 +58,8 @@ function Root({ core, info }: { core: AppCore; info: AppInfo }) {
   void info;
   if (!st) return <AuthCard><p className="muted">Opening local database…</p></AuthCard>;
   if (recovery) return <RecoveryKeyScreen recoveryKey={recovery} onDone={() => setRecovery(null)} />;
-  if (!st.setup) return <SetupWizard core={core} defaultApi={st.apiBase || DEFAULT_API} onRecoveryKey={setRecovery} />;
+  // Fresh installation: owner sign-in (device enrolment) is the only entry point.
+  if (!st.setup) return <OwnerSignIn core={core} defaultApi={st.apiBase || DEFAULT_API} />;
   if (!st.loggedIn)
     return (
       <LoginScreen

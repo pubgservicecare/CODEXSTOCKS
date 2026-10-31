@@ -53,6 +53,9 @@ export class Net {
   dropNextResponse = false;
   imagekitFails = 0;
   uploads: { fileName: string; bytes: number }[] = [];
+  /** Simulated ExchangeRate-API: PKR per USD, or null to make the provider fail. */
+  fxRate: number | null = 278.5;
+  fxCalls = 0;
   deleted: string[] = [];
   constructor(public server: TestServer) {}
 
@@ -71,6 +74,12 @@ export class Net {
       this.uploads.push({ fileName, bytes: file.size });
       const fileId = "fid_" + fileName.replace(/[^a-z0-9]/gi, "").slice(0, 20);
       return Response.json({ url: `https://ik.imagekit.io/codex/codex-stocks/accounts/${fileName}`, fileId, name: fileName });
+    }
+    if (url.host === "open.er-api.com") {
+      this.fxCalls++;
+      if (this.fxRate === null) return new Response("unavailable", { status: 503 });
+      const t = Math.floor(Date.now() / 1000);
+      return Response.json({ result: "success", base_code: "USD", time_last_update_unix: t - 600, time_next_update_unix: t + 86000, rates: { USD: 1, PKR: this.fxRate } });
     }
     if (url.host === "api.imagekit.io") {
       this.deleted.push(url.pathname.split("/").pop()!);

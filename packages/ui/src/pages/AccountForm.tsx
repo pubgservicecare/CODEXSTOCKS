@@ -1,4 +1,4 @@
-import { useEffect, useState, type KeyboardEvent } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   availableLinkKinds,
@@ -6,14 +6,18 @@ import {
   minorToDecimalString,
   newId,
   parseMoney,
+  snapshotFromQuote,
   youtubeId,
   type Account,
+  type FxQuote,
   type AccountInput,
   type Currency,
 } from "@codex/shared";
 import { errMsg, Field, Loading, Notice, TxtView, useApp } from "../components";
 import { Icon } from "../icons";
 import { draftToInput, emptyLink, LinkFields, type LinkDraft } from "./LinkForm";
+import { ImagePicker, type PickedImage } from "../ImagePicker";
+import { FxPreview, useFx } from "../fx-ui";
 
 interface Draft {
   title: string;
@@ -77,6 +81,29 @@ function toInput(d: Draft): AccountInput {
   };
 }
 
+function safeMinor(v: string, c: Currency): number | null {
+  try {
+    return parseMoney(v, c);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Exchange-rate snapshot for the purchase. Only USD purchases need one (PKR is the reporting currency).
+ * A snapshot already recorded for the same USD amount is kept; a new or changed USD purchase records
+ * the current reference rate. Never rewritten later by newer rates.
+ */
+export function purchaseFx(input: AccountInput, orig: Account | null, quote: FxQuote | null): Pick<AccountInput, "purchase_fx_micro" | "purchase_fx_source" | "purchase_fx_at"> {
+  const none = { purchase_fx_micro: null, purchase_fx_source: null, purchase_fx_at: null };
+  if (input.purchase_currency !== "USD") return none;
+  if (orig?.purchase_fx_micro && orig.purchase_currency === "USD" && orig.purchase_cost_minor === input.purchase_cost_minor)
+    return { purchase_fx_micro: orig.purchase_fx_micro, purchase_fx_source: orig.purchase_fx_source, purchase_fx_at: orig.purchase_fx_at };
+  if (!quote) return orig?.purchase_fx_micro && orig.purchase_currency === "USD" ? { purchase_fx_micro: orig.purchase_fx_micro, purchase_fx_source: orig.purchase_fx_source, purchase_fx_at: orig.purchase_fx_at } : none;
+  const snap = snapshotFromQuote(quote);
+  return { purchase_fx_micro: snap.usd_pkr_micro, purchase_fx_source: snap.source, purchase_fx_at: snap.at };
+}
+
 /** Let the Tab key insert a real tab character in TXT fields (for ASCII layouts). */
 export function tabKey(e: KeyboardEvent<HTMLTextAreaElement>, set: (v: string) => void) {
   if (e.key !== "Tab" || e.shiftKey) return;
@@ -100,6 +127,14 @@ export function AccountForm() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [loaded, setLoaded] = useState(!editing);
+  const [image, setImage] = useState<PickedImage | null>(null);
+  const [existingImage, setExistingImage] = useState<string | null>(null);
+  const [orig, setOrig] = useState<Account | null>(null);
+  const { quote } = useFx();
+  const [removeImage, setRemoveImage] = useState(false);
+  /** Set once the account itself is saved; the photo step can then be retried without saving again. */
+  const [savedId, setSavedId] = useState<string | null>(null);
+  const [stage, setStage] = useState<"idle" | "saving" | "image" | "image_failed">("idle");
 
   useEffect(() => {
     if (!id) return;
@@ -107,29 +142,75 @@ export function AccountForm() {
       if (b) {
         setD(fromAccount(b.account));
         setRev(b.account.rev);
+        setExistingImage(b.account.image_url);
+        setOrig(b.account);
       }
       setLoaded(true);
     });
   }, [id, svc]);
+
+  const failRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (stage === "image_failed") failRef.current?.scrollIntoView({ block: "center", behavior: "smooth" });
+  }, [stage]);
+
+  const imageDoneMsg = svc.kind === "desktop" ? "Photo saved on this PC · it uploads automatically when online" : "Photo uploaded";
+
+  /** Attach the chosen photo (or remove the old one) after the account is saved. Never re-saves the account. */
+  const applyImage = async (accountId: string): Promise<boolean> => {
+    if (!image && !(editing && removeImage)) return true;
+    setStage("image");
+    try {
+      if (image) await svc.setImage(accountId, image.bytes);
+      else await svc.removeImage(accountId);
+      return true;
+    } catch (err) {
+      setStage("image_failed");
+      setError(
+        `${editing ? "Changes saved" : "Account created"}, but the photo was not ${image ? "uploaded" : "removed"}: ${errMsg(err)}. ` +
+          "Retry now, or continue and change the photo later from the account page.",
+      );
+      return false;
+    }
+  };
+
+  const retryImage = async () => {
+    if (!savedId) return;
+    setError(null);
+    setBusy(true);
+    try {
+      if (await applyImage(savedId)) {
+        toast(image ? imageDoneMsg : "Photo removed");
+        nav(`/accounts/${savedId}`);
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const up = (p: Partial<Draft>) => setD((x) => ({ ...x, ...p }));
   const needsPassword = links.some((l) => l.kind !== "social");
 
   const save = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (busy || savedId) return; // never submit twice
     setError(null);
     setBusy(true);
+    setStage("saving");
     try {
-      const account = toInput(d);
+      const account = { ...toInput(d), ...purchaseFx(toInput(d), orig, quote) };
       if (editing) {
         await svc.exec("updateAccount", { id, expected_rev: svc.kind === "web" ? rev : undefined, account });
-        toast("Account saved");
+        setSavedId(id!);
+        if (!(await applyImage(id!))) return;
+        toast(image ? `Account saved · ${imageDoneMsg}` : removeImage ? "Account saved · photo removed" : "Account saved");
         nav(`/accounts/${id}`);
       } else {
         if (password && needsPassword && !(await requireVault()))
           throw new Error("Unlock the vault to store the password, or leave the password empty for now");
         const newAccountId = newId();
         await svc.exec("createAccount", { id: newAccountId, account, links: links.map(draftToInput) });
+        setSavedId(newAccountId);
         if (password && needsPassword) {
           try {
             await svc.saveSharedPassword(newAccountId, password);
@@ -137,10 +218,12 @@ export function AccountForm() {
             toast(`Account saved, but the password was not stored: ${errMsg(err)}`, "bad");
           }
         }
-        toast("Account created");
+        if (!(await applyImage(newAccountId))) return;
+        toast(image ? `Account created · ${imageDoneMsg}` : "Account created");
         nav(`/accounts/${newAccountId}`);
       }
     } catch (err) {
+      setStage("idle");
       setError(errMsg(err));
     } finally {
       setBusy(false);
@@ -161,7 +244,7 @@ export function AccountForm() {
           <p>Fields marked <span style={{ color: "var(--accent)" }}>*</span> are required. Purchase cost may be 0 for a genuinely free account.</p>
         </div>
       </div>
-      {error && <Notice kind="bad">{error}</Notice>}
+      {error && stage !== "image_failed" && <Notice kind="bad">{error}</Notice>}
 
       <div className="card">
       <section className="form-section">
@@ -174,7 +257,18 @@ export function AccountForm() {
           <Field label="Title *" className="full">
             <input value={d.title} onChange={(e) => up({ title: e.target.value })} maxLength={200} required />
           </Field>
-          <Field label="Sale price" optional hint="Leave empty if not decided yet">
+          <div className="field full">
+            <span>Account photo<span className="opt">Optional</span></span>
+            <ImagePicker
+              picked={image}
+              onPick={setImage}
+              existingUrl={editing ? existingImage : null}
+              existingRemoved={removeImage}
+              onRemoveExisting={editing ? setRemoveImage : undefined}
+              disabled={busy || !!savedId}
+            />
+          </div>
+          <Field label="Sale price" optional hint="Leave empty if not decided yet. This amount and currency are the listing price; the other currency is only shown as an equivalent.">
             <input value={d.list_price} onChange={(e) => up({ list_price: e.target.value })} inputMode="decimal" placeholder="e.g. 25000" />
           </Field>
           <Field label="Sale currency">
@@ -182,6 +276,7 @@ export function AccountForm() {
               {CURRENCIES.map((c) => <option key={c}>{c}</option>)}
             </select>
           </Field>
+          <div className="full"><FxPreview amount={d.list_price} currency={d.list_currency} label="Listing price" /></div>
           <Field
             label="Public description (plain TXT)"
             className="full"
@@ -231,6 +326,18 @@ export function AccountForm() {
               {CURRENCIES.map((c) => <option key={c}>{c}</option>)}
             </select>
           </Field>
+          <div className="full">
+            <FxPreview amount={d.purchase_cost} currency={d.purchase_currency} label="Purchase cost" />
+            {d.purchase_currency === "USD" && (
+              <small className="hint">
+                {orig?.purchase_fx_micro && orig.purchase_currency === "USD" && orig.purchase_cost_minor === safeMinor(d.purchase_cost, "USD")
+                  ? "The exchange rate recorded with this purchase is kept for your PKR-equivalent reports."
+                  : quote
+                    ? "This rate is saved with the purchase for your PKR-equivalent reports and never changes afterwards."
+                    : "No exchange rate available now: this USD purchase is shown in USD and left out of PKR-equivalent totals until a rate is recorded (edit and save later)."}
+              </small>
+            )}
+          </div>
           <Field label="Purchase date" optional>
             <input type="date" value={d.purchased_at} onChange={(e) => up({ purchased_at: e.target.value })} />
           </Field>
@@ -293,11 +400,30 @@ export function AccountForm() {
         </section>
       )}
       </div>
+      {error && stage === "image_failed" && <div ref={failRef}><Notice kind="bad" className="image-failed">{error}</Notice></div>}
       <div className="action-bar">
-        <span className="small faint">{editing ? "Changes sync to your other devices and the website." : "Saved on this device first, then synced."}</span>
+        {stage === "image" ? (
+          <span className="save-progress" role="status">
+            <span className="bar" aria-hidden="true"><i /></span>
+            {svc.kind === "desktop" ? "Saving photo on this PC…" : "Uploading photo to ImageKit…"}
+          </span>
+        ) : (
+          <span className="small faint">{editing ? "Changes sync to your other devices and the website." : "Saved on this device first, then synced."}</span>
+        )}
         <span className="spacer" />
-        <button type="button" className="btn ghost" onClick={() => nav(-1)}>Cancel</button>
-        <button className="btn primary" disabled={busy}><Icon name="check" size={16} /> {busy ? "Saving…" : editing ? "Save changes" : "Create account"}</button>
+        {stage === "image_failed" && savedId ? (
+          <>
+            <button type="button" className="btn ghost" onClick={() => nav(`/accounts/${savedId}`)}>Continue without photo</button>
+            <button type="button" className="btn primary" disabled={busy} onClick={() => void retryImage()}><Icon name="sync" size={16} /> {busy ? "Retrying…" : "Retry photo"}</button>
+          </>
+        ) : (
+          <>
+            <button type="button" className="btn ghost" onClick={() => nav(-1)} disabled={busy}>Cancel</button>
+            <button className="btn primary" disabled={busy || !!savedId}>
+              <Icon name="check" size={16} /> {stage === "saving" ? "Saving…" : stage === "image" ? "Saving photo…" : editing ? "Save changes" : "Create account"}
+            </button>
+          </>
+        )}
       </div>
     </form>
   );

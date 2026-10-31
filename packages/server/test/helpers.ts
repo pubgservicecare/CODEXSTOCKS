@@ -29,6 +29,8 @@ export async function startServer(over: Partial<ApiConfig> = {}): Promise<TestSe
       folder: "/codex-stocks/accounts",
     },
     log: () => undefined,
+    // No real exchange-rate provider calls in tests; FX tests enable it with a mocked provider.
+    fx: { disabled: true },
     ...over,
   };
   const api = createApi(cfg);

@@ -230,6 +230,37 @@ CREATE INDEX settings_seq_idx ON settings(change_seq);
 CREATE UNIQUE INDEX settings_key_idx ON settings(key) WHERE NOT deleted;
 `,
   },
+  {
+    // Additive only: nullable columns for USD/PKR exchange-rate snapshots on purchases, sales and
+    // expenses, plus a one-row-per-pair cache of the latest reference rate. Existing rows keep NULL
+    // (no snapshot); no existing value is changed.
+    id: "0002_fx_snapshots",
+    sql: `
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS purchase_fx_micro bigint CHECK (purchase_fx_micro > 0);
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS purchase_fx_source text;
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS purchase_fx_at text;
+ALTER TABLE sales ADD COLUMN IF NOT EXISTS fx_usd_pkr_micro bigint CHECK (fx_usd_pkr_micro > 0);
+ALTER TABLE sales ADD COLUMN IF NOT EXISTS fx_source text;
+ALTER TABLE sales ADD COLUMN IF NOT EXISTS fx_at text;
+ALTER TABLE sales ADD COLUMN IF NOT EXISTS fx_override_reason text;
+ALTER TABLE expenses ADD COLUMN IF NOT EXISTS fx_usd_pkr_micro bigint CHECK (fx_usd_pkr_micro > 0);
+ALTER TABLE expenses ADD COLUMN IF NOT EXISTS fx_source text;
+ALTER TABLE expenses ADD COLUMN IF NOT EXISTS fx_at text;
+
+CREATE TABLE IF NOT EXISTS fx_rates (
+  pair text PRIMARY KEY CHECK (pair = 'USD/PKR'),
+  rate_micro bigint CHECK (rate_micro > 0),
+  source text,
+  source_url text,
+  frequency text,
+  effective_at timestamptz,
+  next_update_at timestamptz,
+  retrieved_at timestamptz,
+  last_attempt_at timestamptz,
+  last_error text
+);
+`,
+  },
 ];
 
 async function checksum(s: string): Promise<string> {

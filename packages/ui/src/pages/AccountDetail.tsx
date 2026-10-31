@@ -2,18 +2,16 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   availableLinkKinds,
-  CURRENCIES,
+  costInSaleCurrency,
   formatMoney,
   formatRate,
+  formatUsdPkr,
   maskCode,
   parseMoney,
-  parseRate,
   PROVIDER_LABELS,
-  SALE_CHANNELS,
   twoStepWarning,
   youtubeId,
   type AccountBundle,
-  type Currency,
   type LoginLink,
   type Sale,
 } from "@codex/shared";
@@ -37,6 +35,8 @@ import { draftToInput, emptyLink, LinkFields, linkToDraft, type LinkDraft } from
 import { actorLabel, AuditDetails, EmptyState, Notice } from "../components";
 import { Icon } from "../icons";
 import { fallbackArt } from "../art";
+import { canMarkSold, MarkSoldDialog } from "./MarkSold";
+import { FxEquivalent, FxRateLine, useFx } from "../fx-ui";
 
 type Tab = "overview" | "logins" | "codes" | "sales" | "history";
 
@@ -78,6 +78,7 @@ function Header({ b, reload }: { b: AccountBundle; reload: () => void }) {
   const nav = useNavigate();
   const { busy, run } = useAction();
   const [confirm, setConfirm] = useState<null | "delete" | "archive">(null);
+  const [selling, setSelling] = useState(false);
   const a = b.account;
   const rev = svc.kind === "web" ? a.rev : undefined;
   const setStatus = (status: string) => run(() => svc.exec("setAccountStatus", { id: a.id, status, expected_rev: rev }), `Status: ${status}`);
@@ -98,13 +99,16 @@ function Header({ b, reload }: { b: AccountBundle; reload: () => void }) {
           <div className="price-xl">
             {a.list_price_minor === null ? <span className="faint" style={{ fontSize: 18, fontWeight: 550 }}>No sale price set</span> : <Money minor={a.list_price_minor} currency={a.list_currency} />}
           </div>
+          {a.list_price_minor !== null && <PriceFx minor={a.list_price_minor} currency={a.list_currency} />}
           <div className="facts">
             <div><small>Purchase cost</small><b><Money minor={a.purchase_cost_minor} currency={a.purchase_currency} /></b></div>
             <div><small>Margin at this price</small><b style={{ color: margin !== null && margin < 0 ? "var(--bad)" : margin ? "var(--ok)" : undefined }}>{margin === null ? <span className="faint">—</span> : <Money minor={margin} currency={a.purchase_currency} />}</b></div>
             <div><small>Logins · codes</small><b>{b.links.length}/4 · {unusedCodes} unused</b></div>
           </div>
+          {a.status === "sold" && <SoldSummary b={b} />}
           <div className="btn-group" style={{ marginTop: 20 }}>
-            <Link className="btn primary" to={`/accounts/${a.id}/edit`}><Icon name="edit" size={15} /> Edit</Link>
+            {canMarkSold(a) && <button className="btn primary mark-sold" onClick={() => setSelling(true)}><Icon name="sales" size={15} /> Mark as Sold</button>}
+            <Link className={`btn ${canMarkSold(a) ? "" : "primary"}`} to={`/accounts/${a.id}/edit`}><Icon name="edit" size={15} /> Edit</Link>
             {a.status === "available" && (
               <button className="btn" disabled={busy} onClick={() => run(() => svc.exec("setPublished", { id: a.id, published: !a.published, expected_rev: rev }), a.published ? "Unpublished" : "Published on website")}>
                 <Icon name="globe" size={15} /> {a.published ? "Unpublish" : "Publish"}
@@ -118,6 +122,7 @@ function Header({ b, reload }: { b: AccountBundle; reload: () => void }) {
           <div className="small faint mono" style={{ marginTop: "auto", paddingTop: 16 }}>ID {a.id}</div>
         </div>
       </div>
+      {selling && <MarkSoldDialog account={a} onClose={() => setSelling(false)} onSold={reload} />}
       {confirm === "archive" && (
         <Confirm title="Archive account?" body="Archived accounts leave the inventory value and are hidden from the website. You can make it available again later." confirm="Archive" onClose={() => setConfirm(null)} onYes={async () => { await setStatus("archived"); reload(); }} />
       )}
@@ -135,6 +140,41 @@ function Header({ b, reload }: { b: AccountBundle; reload: () => void }) {
         />
       )}
     </>
+  );
+}
+
+/** Sold accounts: the actual sale amount, date and profit, straight from the recorded sale. */
+function SoldSummary({ b }: { b: AccountBundle }) {
+  const sale = b.sales.find((s) => s.status === "completed" && !s.deleted);
+  if (!sale) return null;
+  const a = b.account;
+  const refunded = b.refunds.filter((r) => r.sale_id === sale.id && !r.deleted).reduce((n, r) => n + r.amount_minor, 0);
+  const cost = costInSaleCurrency(a, sale);
+  const profit = cost === null ? null : sale.amount_minor - refunded - cost;
+  return (
+    <div className="sold-box" data-testid="sold-summary">
+      <div><small>Sold for</small><b><Money minor={sale.amount_minor} currency={sale.currency} /></b></div>
+      <div><small>Sold on</small><b>{fmtDate(sale.sold_at, true)}</b></div>
+      <div>
+        <small>Profit on this account</small>
+        <b style={{ color: profit !== null && profit < 0 ? "var(--bad)" : "var(--ok)" }}>{profit === null ? <span className="faint">Needs exchange rate</span> : <Money minor={profit} currency={sale.currency} />}</b>
+      </div>
+      <p className="small faint">
+        Sold amount{refunded ? " − refunds" : ""} − purchase cost{sale.currency !== a.purchase_currency && sale.exchange_rate_micro ? ` (converted at ${formatRate(sale.exchange_rate_micro)} ${sale.currency} per ${a.purchase_currency})` : ""}. Business expenses are deducted in the overall report, not here.
+      </p>
+    </div>
+  );
+}
+
+/** Listing price in the other currency, with the reference rate it was converted at. */
+function PriceFx({ minor, currency }: { minor: number; currency: Parameters<typeof FxEquivalent>[0]["currency"] }) {
+  const { quote } = useFx();
+  if (!quote) return null;
+  return (
+    <div className="price-fx">
+      <FxEquivalent minor={minor} currency={currency} /> <span className="faint">equivalent</span>
+      <div><FxRateLine quote={quote} className="small faint" /></div>
+    </div>
   );
 }
 
@@ -166,7 +206,12 @@ function ImageBox({ b }: { b: AccountBundle }) {
       </div>
       {local && local.status !== "uploaded" && (
         <Notice kind={local.status === "failed" ? "bad" : "warn"} className="small">
-          {local.status === "failed" ? `Upload failed: ${local.error ?? "unknown error"}. It will retry automatically.` : "Waiting to upload (kept on this PC until ImageKit confirms)."}
+          {local.status === "failed" ? `Upload failed: ${local.error ?? "unknown error"}. It will retry automatically.` : local.status === "uploading" ? "Uploading to ImageKit…" : "Waiting to upload (kept on this PC until ImageKit confirms)."}
+          {local.status === "failed" && svc.retryImage && (
+            <button className="btn sm" style={{ marginLeft: 8 }} disabled={busy} onClick={() => run(() => svc.retryImage!(b.account.id), "Retrying upload…")}>
+              <Icon name="sync" size={13} /> Retry now
+            </button>
+          )}
         </Notice>
       )}
       <div className="row" style={{ marginTop: 10 }}>
@@ -194,7 +239,9 @@ function Overview({ b }: { b: AccountBundle }) {
         </div>
         <dl className="kv">
           <dt>Sale price</dt>
-          <dd>{a.list_price_minor === null ? <span className="faint">Not set</span> : <Money minor={a.list_price_minor} currency={a.list_currency} />}</dd>
+          <dd>
+            {a.list_price_minor === null ? <span className="faint">Not set</span> : <><Money minor={a.list_price_minor} currency={a.list_currency} /> <span className="small faint">({a.list_currency}, original)</span> <FxEquivalent minor={a.list_price_minor} currency={a.list_currency} className="small" /></>}
+          </dd>
           <dt>YouTube</dt>
           <dd>{yt ? <a href={`https://www.youtube.com/watch?v=${yt}`} target="_blank" rel="noreferrer noopener">{a.youtube_url}</a> : <span className="faint">—</span>}</dd>
           <dt>Previous owner shown</dt>
@@ -212,6 +259,18 @@ function Overview({ b }: { b: AccountBundle }) {
         <dl className="kv">
           <dt>Purchase cost</dt>
           <dd><Money minor={a.purchase_cost_minor} currency={a.purchase_currency} />{a.purchase_cost_minor === 0 && <span className="badge" style={{ marginLeft: 8 }}>Free</span>}</dd>
+          {a.purchase_currency === "USD" && (
+            <>
+              <dt>Purchase rate</dt>
+              <dd>
+                {a.purchase_fx_micro ? (
+                  <>{formatUsdPkr(a.purchase_fx_micro)} <span className="small faint">· {a.purchase_fx_source} · {fmtDate(a.purchase_fx_at, true)} · recorded with the purchase</span></>
+                ) : (
+                  <span className="faint">Not recorded — left out of PKR-equivalent totals</span>
+                )}
+              </dd>
+            </>
+          )}
           <dt>Purchased</dt><dd>{fmtDate(a.purchased_at)}</dd>
           <dt>Purchase reference</dt><dd>{a.purchase_reference ?? <span className="faint">—</span>}</dd>
           <dt>Previous owner</dt><dd>{a.old_owner_name ?? <span className="faint">—</span>}</dd>
@@ -483,74 +542,6 @@ function Codes({ b }: { b: AccountBundle }) {
 
 /* ------------------------------- sales ----------------------------- */
 
-export function SaleForm({ b, onClose }: { b: AccountBundle; onClose: () => void }) {
-  const { svc } = useApp();
-  const { busy, run } = useAction();
-  const a = b.account;
-  const [f, setF] = useState({
-    amount: a.list_price_minor !== null ? String(a.list_price_minor / 100) : "",
-    currency: (a.list_currency ?? a.purchase_currency) as Currency,
-    rate: "",
-    date: todayIso(),
-    channel: "whatsapp",
-    buyer_name: "",
-    buyer_contact: "",
-    reference: "",
-    notes: "",
-  });
-  const [err, setErr] = useState<string | null>(null);
-  const cross = f.currency !== a.purchase_currency;
-  const save = async () => {
-    setErr(null);
-    try {
-      const args = {
-        account_id: a.id,
-        sold_at: new Date(f.date + "T12:00:00").toISOString(),
-        amount_minor: parseMoney(f.amount, f.currency),
-        currency: f.currency,
-        exchange_rate_micro: cross ? parseRate(f.rate) : null,
-        channel: f.channel,
-        buyer_name: f.buyer_name || null,
-        buyer_contact: f.buyer_contact || null,
-        reference: f.reference || null,
-        notes: f.notes || null,
-      };
-      const ok = await run(() => svc.exec("recordSale", args), "Sale recorded · account marked sold");
-      if (ok !== undefined) onClose();
-    } catch (e) {
-      setErr(errMsg(e));
-    }
-  };
-  return (
-    <Modal title="Record sale" onClose={onClose}>
-      <div className="form-grid">
-        <Field label="Amount received *"><input value={f.amount} onChange={(e) => setF({ ...f, amount: e.target.value })} inputMode="decimal" /></Field>
-        <Field label="Currency *">
-          <select value={f.currency} onChange={(e) => setF({ ...f, currency: e.target.value as Currency })}>{CURRENCIES.map((c) => <option key={c}>{c}</option>)}</select>
-        </Field>
-        {cross && (
-          <Field className="full" label={`Exchange rate * (${f.currency} per 1 ${a.purchase_currency})`} hint={`Purchase was ${formatMoney(a.purchase_cost_minor, a.purchase_currency)}. The rate converts its cost into ${f.currency} for profit.`}>
-            <input value={f.rate} onChange={(e) => setF({ ...f, rate: e.target.value })} inputMode="decimal" placeholder={a.purchase_currency === "USD" ? "e.g. 280" : "e.g. 0.00357"} />
-          </Field>
-        )}
-        <Field label="Sale date"><input type="date" value={f.date} onChange={(e) => setF({ ...f, date: e.target.value })} /></Field>
-        <Field label="Channel">
-          <select value={f.channel} onChange={(e) => setF({ ...f, channel: e.target.value })}>{SALE_CHANNELS.map((c) => <option key={c}>{c}</option>)}</select>
-        </Field>
-        <Field label="Buyer name"><input value={f.buyer_name} onChange={(e) => setF({ ...f, buyer_name: e.target.value })} /></Field>
-        <Field label="Buyer contact"><input value={f.buyer_contact} onChange={(e) => setF({ ...f, buyer_contact: e.target.value })} /></Field>
-        <Field label="Sale reference" className="full"><input value={f.reference} onChange={(e) => setF({ ...f, reference: e.target.value })} /></Field>
-        <Field label="Notes" className="full"><textarea rows={2} value={f.notes} onChange={(e) => setF({ ...f, notes: e.target.value })} /></Field>
-      </div>
-      {err && <div className="notice bad">{err}</div>}
-      <div className="modal-actions">
-        <button className="btn ghost" onClick={onClose}>Cancel</button>
-        <button className="btn primary" disabled={busy} onClick={save}>Record sale</button>
-      </div>
-    </Modal>
-  );
-}
-
 export function RefundForm({ sale, refunded, onClose }: { sale: Sale; refunded: number; onClose: () => void }) {
   const { svc } = useApp();
   const { busy, run } = useAction();
@@ -606,9 +597,9 @@ function Sales({ b }: { b: AccountBundle }) {
         <span className="icon-tile gold"><Icon name="sales" size={16} /></span>
         <h2>Sales & refunds</h2>
         <span className="spacer" />
-        {canSell && <button className="btn primary sm" onClick={() => setSell(true)}><Icon name="plus" size={14} /> Record sale</button>}
+        {canSell && <button className="btn primary sm" onClick={() => setSell(true)}><Icon name="sales" size={14} /> Mark as Sold</button>}
       </div>
-      {!b.sales.length && <EmptyState icon="sales" title="Not sold yet" body={canSell ? "When a buyer pays, record the sale here. The account is marked sold everywhere." : "This account has no sales."} />}
+      {!b.sales.length && <EmptyState icon="sales" title="Not sold yet" body={canSell ? "When a buyer pays, use Mark as Sold and enter the amount you actually received. The account is marked sold everywhere." : "This account has no sales."} />}
       {b.sales.map((s) => {
         const refunds = b.refunds.filter((r) => r.sale_id === s.id);
         const refunded = refunds.reduce((a, r) => a + r.amount_minor, 0);
@@ -636,7 +627,7 @@ function Sales({ b }: { b: AccountBundle }) {
           </div>
         );
       })}
-      {sell && <SaleForm b={b} onClose={() => setSell(false)} />}
+      {sell && <MarkSoldDialog account={b.account} onClose={() => setSell(false)} />}
       {refund && <RefundForm sale={refund} refunded={b.refunds.filter((r) => r.sale_id === refund.id).reduce((a, r) => a + r.amount_minor, 0)} onClose={() => setRefund(null)} />}
       {voiding && (
         <Confirm danger title="Void this sale?" body="Use this only for a sale recorded by mistake. The account becomes available again. The void is kept in the audit history." confirm="Void sale" onClose={() => setVoiding(null)} onYes={() => run(() => svc.exec("voidSale", { id: voiding.id, reason: "Voided by owner" }), "Sale voided").then(() => undefined)} />

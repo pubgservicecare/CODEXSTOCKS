@@ -37,6 +37,28 @@ by mistake) removes it entirely and makes the account available again.
 Sales with a different currency and no rate are listed as "missing rate" on the dashboard and excluded from
 cost of sold (the server and desktop refuse to create such sales; this only guards imported data).
 
+## Mark as Sold (desktop and admin website)
+
+The **Mark as Sold** dialog records the sale with the existing `recordSale` command — no new formula and no
+schema change. The owner types the **actual amount received** (the listing price is only shown for reference and
+is never copied into the sale) and the currency; a different currency than the purchase requires the exchange
+rate. The review step shows listing price, purchase cost, actual amount and the expected profit/loss of that one
+account: `actual amount − purchase cost` (cost converted at the entered rate when currencies differ — the same
+`costInSaleCurrency` used by the reports). Business expenses and later refunds are not part of that per-account
+figure; they are applied in the per-currency report above. One atomic command saves the sale, marks the account
+`sold`, unpublishes it (it leaves the website and its old public URL returns 404) and writes `sale.recorded` to the
+audit history. Each dialog uses one sale id, so a double tap or a retried request after a lost response is
+answered "Sale already recorded" instead of creating a second sale; a second sale of the same account from
+another device is rejected as a conflict.
+
 Tested cases (`packages/shared/test/shared.test.ts`): profitable sale, loss-making sale, zero-cost account,
 expenses, refunds, restocking refund, voided sale, separate USD/PKR, cross-currency with rate, rounding,
 unsold inventory.
+
+## Exchange-rate snapshots and the combined view
+
+See [FX.md](FX.md). The native per-currency formula above is unchanged. Purchases, sales and expenses involving USD
+now store the USD/PKR rate used when they were recorded (manual sale rates need a reason); refunds use their sale's
+rate. The **combined** view converts each record to PKR at its own recorded rate and applies the same formula
+(`computeConsolidated`); USD records without any recorded rate are excluded and counted, never guessed. The
+dashboard's PKR and USD charts are one PKR series, the USD one scaled by a single display rate.

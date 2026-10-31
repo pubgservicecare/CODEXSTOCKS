@@ -48,7 +48,7 @@ const strip = <T extends Record<string, unknown>>(r: T) => {
 describe("feature surface", () => {
   it("web admin implements every desktop admin capability except documented desktop-only ones", async () => {
     const { desk, web } = await setup();
-    const DESKTOP_ONLY = ["localImage", "syncNow", "outboxIssues", "retryOutbox", "discardOutbox", "restoreBackup", "cloudInfo", "pairWithCloud"];
+    const DESKTOP_ONLY = ["localImage", "retryImage", "syncNow", "outboxIssues", "retryOutbox", "discardOutbox", "restoreBackup", "cloudInfo", "pairWithCloud"];
     const d = Object.keys(desk).filter((k) => typeof (desk as unknown as Record<string, unknown>)[k] === "function");
     const wk = new Set(Object.keys(web));
     const missingOnWeb = d.filter((k) => !wk.has(k) && !DESKTOP_ONLY.includes(k));

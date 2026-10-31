@@ -74,7 +74,9 @@ export async function applyOp(db: Db, rawOp: unknown, ctx: SyncContext): Promise
       } else {
         let row: AnyRow;
         try {
-          row = validateRow(op.entity, { ...op.row, id: op.id, rev: prev?.rev ?? 0 });
+          // Fields the client did not send (an older app version that does not know them yet, e.g. the
+          // exchange-rate snapshots) keep their stored value instead of being cleared.
+          row = validateRow(op.entity, { ...(prev ?? {}), ...op.row, id: op.id, rev: prev?.rev ?? 0 });
           if (
             op.entity === "accounts" &&
             ctx.imageUrlPrefix &&

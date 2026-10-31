@@ -35,6 +35,7 @@ import {
 import type { Db } from "./db";
 import { imagekitAuthParams, imagekitDeleteFile, type ImageKitConfig } from "./imagekit";
 import { PgEntityStore, selectList } from "./store";
+import { getUsdPkrQuote, type FxConfig } from "./fx";
 import { applyOp, pullChanges, pushOps } from "./sync";
 
 export interface ApiConfig {
@@ -54,6 +55,8 @@ export interface ApiConfig {
   /** Password hashing parameters (tests use cheaper ones). */
   passwordParams?: { logN: number; r: number; p: number; keyLen: number };
   log?: (msg: string) => void;
+  /** USD/PKR reference-rate provider settings (server-side only). */
+  fx?: FxConfig;
 }
 
 export class HttpError extends Error {
@@ -185,9 +188,18 @@ route("GET", "/health", "public", async (c) => {
   return json({ ok: db, service: "codex-stocks-api", version: 1, time: c.now.toISOString() }, db ? 200 : 503, c.cors);
 });
 
+/** Latest cached USD/PKR reference rate (daily). Public: it is shown next to prices on the storefront. */
+route("GET", "/fx", "public", async (c) => {
+  const quote = await getUsdPkrQuote(c.cfg.db, { fetchImpl: c.cfg.fetchImpl, now: c.now, fx: c.cfg.fx, log: c.cfg.log });
+  return json({ quote }, 200, { "Cache-Control": "public, max-age=300, s-maxage=300", ...c.cors });
+});
+
 route("GET", "/auth/status", "public", async (c) => {
   const r = await c.cfg.db.query("SELECT 1 FROM owner");
-  return json({ owner_exists: r.rowCount > 0, setup_enabled: !!c.cfg.setupToken }, 200, c.cors);
+  const ownerExists = r.rowCount > 0;
+  // Single-owner system: once the owner exists, setup is closed even if SETUP_TOKEN is still configured.
+  const setupEnabled = !ownerExists && !!c.cfg.setupToken && c.cfg.setupToken.length >= 16;
+  return json({ owner_exists: ownerExists, setup_enabled: setupEnabled }, 200, c.cors);
 });
 
 async function issueLogin(c: Ctx, client: "web" | "desktop", device?: { id?: string; name: string; platform: string }) {
@@ -223,9 +235,18 @@ async function issueLogin(c: Ctx, client: "web" | "desktop", device?: { id?: str
 
 route("POST", "/auth/setup", "public", async (c) => {
   const body = setupSchema.parse(await c.body());
+  // Checked before the token: once the owner exists, setup is permanently closed and a leaked token is useless.
+  if ((await c.cfg.db.query("SELECT 1 FROM owner")).rowCount > 0)
+    throw new HttpError(409, "owner_exists", "The cloud owner account already exists. Sign in instead.");
   if (!c.cfg.setupToken || c.cfg.setupToken.length < 16)
     throw new HttpError(403, "setup_disabled", "Cloud setup is disabled on this server (SETUP_TOKEN not configured)");
-  if (!constantEq(body.setup_token, c.cfg.setupToken)) throw new HttpError(403, "setup_token", "Invalid setup code");
+  const keys = [`setup:${clientIp(c.req)}`];
+  if (await isThrottled(c.cfg.db, keys, c.now))
+    throw new HttpError(429, "throttled", "Too many failed attempts. Wait 15 minutes and try again.");
+  if (!constantEq(body.setup_token, c.cfg.setupToken)) {
+    await recordFailure(c.cfg.db, keys, c.now);
+    throw new HttpError(403, "setup_token", "Invalid setup code");
+  }
   const problem = passwordProblem(body.password);
   if (problem) throw new HttpError(422, "weak_password", problem);
   const hash = await hashPassword(body.password, c.cfg.passwordParams);
@@ -545,7 +566,7 @@ const PUBLIC_WHERE = `NOT a.deleted AND a.published AND a.status = 'available'
 
 export async function queryPublicListings(
   db: Db,
-  opts: { q?: string | null; currency?: string | null; sort?: string | null; limit?: number } = {},
+  opts: { q?: string | null; currency?: string | null; sort?: string | null; limit?: number; usdPkrMicro?: number | null } = {},
 ): Promise<PublicListing[]> {
   const params: unknown[] = [];
   let where = PUBLIC_WHERE;
@@ -557,11 +578,19 @@ export async function queryPublicListings(
     params.push(opts.currency);
     where += ` AND a.list_currency = $${params.length}`;
   }
+  // Price sorting compares PKR equivalents when a USD/PKR rate is known (mixed-currency listings);
+  // without a rate it falls back to the raw amount, as before.
+  let priceKey = "a.list_price_minor";
+  const byPrice = opts.sort === "price_asc" || opts.sort === "price_desc";
+  if (byPrice && opts.usdPkrMicro && Number.isInteger(opts.usdPkrMicro) && opts.usdPkrMicro > 0) {
+    params.push(opts.usdPkrMicro);
+    priceKey = `(CASE WHEN a.list_currency = 'USD' THEN a.list_price_minor::numeric * $${params.length} / 1000000 ELSE a.list_price_minor END)`;
+  }
   const order =
     opts.sort === "price_asc"
-      ? "a.list_price_minor ASC NULLS LAST"
+      ? `${priceKey} ASC NULLS LAST`
       : opts.sort === "price_desc"
-        ? "a.list_price_minor DESC NULLS LAST"
+        ? `${priceKey} DESC NULLS LAST`
         : "a.updated_at DESC";
   const limit = Math.min(opts.limit ?? 200, 500);
   const r = await db.query<Parameters<typeof toPublicListing>[0]>(
@@ -596,7 +625,8 @@ const PUBLIC_CACHE = { "Cache-Control": "public, max-age=30, s-maxage=30" };
 
 route("GET", "/public/listings", "public", async (c) => {
   const sp = c.url.searchParams;
-  const rows = await queryPublicListings(c.cfg.db, { q: sp.get("q"), currency: sp.get("currency"), sort: sp.get("sort") });
+  const fx = sp.get("sort") ? await getUsdPkrQuote(c.cfg.db, { fetchImpl: c.cfg.fetchImpl, now: c.now, fx: c.cfg.fx }).catch(() => null) : null;
+  const rows = await queryPublicListings(c.cfg.db, { q: sp.get("q"), currency: sp.get("currency"), sort: sp.get("sort"), usdPkrMicro: fx?.usd_pkr_micro });
   return json(rows, 200, { ...PUBLIC_CACHE, ...c.cors });
 });
 

@@ -1,6 +1,21 @@
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { Link } from "react-router-dom";
-import { CURRENCIES, formatMoney, type AuditEvent, type Currency, type CurrencyReport } from "@codex/shared";
+import {
+  computeConsolidated,
+  consolidatedMonthlyFlow,
+  convertUsdPkr,
+  CURRENCIES,
+  displayFlow,
+  formatMoney,
+  type AuditEvent,
+  type Currency,
+  type CurrencyReport,
+  type DisplayBucket,
+  type Expense,
+  type Refund,
+  type Sale,
+} from "@codex/shared";
+import { FxRateLine, useFx } from "../fx-ui";
 import { fmtDate, Loading, Notice, useApp, useLoad } from "../components";
 import { Icon, type IconName } from "../icons";
 import { ART, fallbackArt } from "../art";
@@ -57,67 +72,125 @@ function MoneyCard({ c, r }: { c: Currency; r: CurrencyReport }) {
   );
 }
 
-interface Flow { sales: { sold_at: string; amount_minor: number; currency: Currency; status: string }[]; refunds: { refunded_at: string; amount_minor: number; currency: Currency }[]; expenses: { incurred_at: string; amount_minor: number; currency: Currency }[]; accounts: AccountListItem[] }
+interface Flow {
+  sales: Sale[];
+  refunds: Refund[];
+  expenses: Expense[];
+  accounts: AccountListItem[];
+}
 
-/** Last six months: sales received vs. money out, for one currency, from recorded transactions only. */
-function MonthlyChart({ flow }: { flow: Flow }) {
-  const [c, setC] = useState<Currency>(() => {
-    const usd = flow.sales.filter((s) => s.currency === "USD").length;
-    const pkr = flow.sales.filter((s) => s.currency === "PKR").length;
-    return usd > pkr ? "USD" : "PKR";
+export function lastMonths(n = 6, now = new Date()) {
+  return Array.from({ length: n }, (_, i) => {
+    const d = new Date(now.getFullYear(), now.getMonth() - (n - 1) + i, 1);
+    return { key: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`, label: d.toLocaleDateString(undefined, { month: "short" }) };
   });
-  const months = useMemo(() => {
-    const now = new Date();
-    return Array.from({ length: 6 }, (_, i) => {
-      const d = new Date(now.getFullYear(), now.getMonth() - 5 + i, 1);
-      return { key: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`, label: d.toLocaleDateString(undefined, { month: "short" }) };
-    });
-  }, []);
-  const data = useMemo(() => {
-    const m = new Map(months.map((x) => [x.key, { in: 0, out: 0 }]));
-    const add = (iso: string | null | undefined, k: "in" | "out", v: number) => {
-      const e = iso && m.get(iso.slice(0, 7));
-      if (e) e[k] += v;
-    };
-    flow.sales.filter((s) => s.currency === c && s.status !== "voided").forEach((s) => add(s.sold_at, "in", s.amount_minor));
-    flow.refunds.filter((r) => r.currency === c).forEach((r) => add(r.refunded_at, "out", r.amount_minor));
-    flow.expenses.filter((x) => x.currency === c).forEach((x) => add(x.incurred_at, "out", x.amount_minor));
-    flow.accounts.filter((a) => a.purchase_currency === c).forEach((a) => add(a.purchased_at ?? a.created_at, "out", a.purchase_cost_minor));
-    return months.map((x) => ({ ...x, ...m.get(x.key)! }));
-  }, [flow, c, months]);
-  const max = Math.max(1, ...data.flatMap((d) => [d.in, d.out]));
-  const empty = data.every((d) => !d.in && !d.out);
+}
+
+/** One chart of the shared series. Bar heights come from the canonical PKR series, so both charts match exactly. */
+function FlowChart({ title, sub, currency, rows, heights }: { title: string; sub: string; currency: Currency; rows: DisplayBucket[]; heights: { in: number; out: number }[] }) {
+  const months = lastMonths(rows.length);
+  return (
+    <div className="flow-chart" data-testid={`flow-${currency}`}>
+      <div className="flow-head">
+        <span className="ccy">{currency}</span>
+        <b>{title}</b>
+        <span className="small faint">{sub}</span>
+      </div>
+      <div className="chart" style={{ ["--n" as string]: rows.length }} role="img" aria-label={`${title}: monthly money in and out`}>
+        {rows.map((d, i) => (
+          <div className="col" key={d.key} title={`${months[i].label}: in ${formatMoney(d.in, currency)} · out ${formatMoney(d.out, currency)}`}>
+            <div className="bars">
+              <span className="b in" style={{ height: `${heights[i].in}%` }} />
+              <span className="b out" style={{ height: `${heights[i].out}%` }} />
+            </div>
+            <span className="m">{months[i].label}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Last six months, ALL currencies together. Every transaction is converted into PKR with the rate
+ * recorded on it (one shared series); the PKR and USD charts are both drawn from that series, the USD one
+ * scaled by ONE display rate for the whole period — so they always rise and fall together.
+ */
+function MonthlyChart({ flow }: { flow: Flow }) {
+  const { quote } = useFx();
+  const months = useMemo(() => lastMonths(6), []);
+  const { buckets, excluded } = useMemo(() => consolidatedMonthlyFlow(flow, months.map((m) => m.key)), [flow, months]);
+  const pkr = displayFlow(buckets, "PKR", null)!;
+  const usd = displayFlow(buckets, "USD", quote?.usd_pkr_micro ?? null);
+  const max = Math.max(1, ...buckets.flatMap((b) => [b.in, b.out]));
+  const heights = buckets.map((b) => ({ in: (b.in / max) * 100, out: (b.out / max) * 100 }));
+  const empty = buckets.every((d) => !d.in && !d.out);
+  const left = excluded.sales + excluded.refunds + excluded.purchases + excluded.expenses;
   return (
     <div className="card">
       <div className="card-head">
         <span className="icon-tile gold"><Icon name="sales" size={16} /></span>
-        <h2>Last 6 months</h2>
-        <span className="spacer" />
-        <div className="seg" role="group" aria-label="Chart currency">
-          {CURRENCIES.map((x) => <button key={x} className={x === c ? "on" : ""} onClick={() => setC(x)}>{x}</button>)}
-        </div>
+        <h2>Last 6 months · all currencies</h2>
       </div>
       {empty ? (
-        <div className="empty small" style={{ padding: "48px 12px" }}>No {c} transactions in the last six months yet.</div>
+        <div className="empty small" style={{ padding: "48px 12px" }}>No transactions in the last six months yet.</div>
       ) : (
         <>
-          <div className="chart" style={{ ["--n" as string]: 6 }} role="img" aria-label={`Monthly ${c} sales received and money out`}>
-            {data.map((d) => (
-              <div className="col" key={d.key} title={`${d.label}: in ${formatMoney(d.in, c)} · out ${formatMoney(d.out, c)}`}>
-                <div className="bars">
-                  <span className="b in" style={{ height: `${(d.in / max) * 100}%` }} />
-                  <span className="b out" style={{ height: `${(d.out / max) * 100}%` }} />
-                </div>
-                <span className="m">{d.label}</span>
-              </div>
-            ))}
+          <div className="flow-pair">
+            <FlowChart title="PKR equivalent" sub="at each transaction's recorded rate" currency="PKR" rows={pkr} heights={heights} />
+            {usd ? (
+              <FlowChart title="USD equivalent" sub="at the current reference rate" currency="USD" rows={usd} heights={heights} />
+            ) : (
+              <div className="flow-chart empty small">No USD/PKR reference rate available, so the USD view cannot be shown.</div>
+            )}
           </div>
           <div className="legend">
             <span><i style={{ background: "var(--accent)" }} />Sales received</span>
             <span><i style={{ background: "rgba(255,255,255,0.3)" }} />Purchases, expenses & refunds</span>
           </div>
+          <p className="small faint" style={{ margin: "10px 0 0" }}>
+            Both charts show the same transactions. USD amounts are first converted to PKR at the rate saved with each transaction; the USD chart
+            then uses one rate for the whole period{quote ? <> (<FxRateLine quote={quote} />)</> : null}, so it is an equivalent, not the amounts actually paid in USD.
+          </p>
+          {left > 0 && (
+            <p className="small" style={{ margin: "6px 0 0", color: "var(--warn)" }}>
+              {left} USD record(s) have no saved exchange rate and are not included in these charts (see the native USD figures above).
+            </p>
+          )}
         </>
       )}
+    </div>
+  );
+}
+
+/** Combined books in PKR (each transaction at its recorded rate), with a USD equivalent at the display rate. */
+function ConsolidatedCard({ flow }: { flow: Flow }) {
+  const { quote } = useFx();
+  const r = useMemo(() => computeConsolidated(flow), [flow]);
+  const usd = (v: number) => (quote ? formatMoney(convertUsdPkr(v, "PKR", "USD", quote.usd_pkr_micro), "USD") : "—");
+  const left = r.excluded.sales + r.excluded.refunds + r.excluded.costs + r.excluded.purchases + r.excluded.expenses;
+  const rows: [string, number][] = [
+    ["Incoming · sales received", r.incoming],
+    ["Outgoing · purchases, expenses, refunds", r.outgoing],
+    ["Net cash", r.netCash],
+    ["Unsold inventory at cost", r.inventoryValue],
+  ];
+  return (
+    <div className="card money-card" data-testid="consolidated">
+      <div className="card-head">
+        <span className="ccy">ALL</span>
+        <h2>Combined net profit</h2>
+        <span className="spacer" />
+        <span className="small faint">PKR and USD together, each at its recorded rate</span>
+      </div>
+      <div className={`figure ${r.netProfit < 0 ? "neg" : ""}`}>{formatMoney(r.netProfit, "PKR")}</div>
+      <div className="small faint" style={{ marginTop: -6 }}>≈ {usd(r.netProfit)} at the current reference rate</div>
+      <div className="money-rows">
+        {rows.map(([k, v]) => (
+          <div className="money-row" key={k}><span className="k">{k}</span><span className="v">{formatMoney(v, "PKR")} <span className="faint small">≈ {usd(v)}</span></span></div>
+        ))}
+      </div>
+      {left > 0 && <p className="small" style={{ margin: "10px 0 0", color: "var(--warn)" }}>{left} USD record(s) without a saved exchange rate are not included.</p>}
     </div>
   );
 }
@@ -204,7 +277,7 @@ export function Dashboard() {
           <h1>{greet}{svc.username() ? `, ${svc.username()}` : ""}</h1>
           <p>
             {counts.available} account{counts.available === 1 ? "" : "s"} available · {counts.published} live on codexstocks.org.
-            USD and PKR are always reported separately.
+            Native PKR and USD books stay separate; the combined view converts each transaction at its recorded rate.
           </p>
           <div className="row">
             <Link className="btn primary" to="/accounts/new"><Icon name="plus" size={16} /> New account</Link>
@@ -247,8 +320,9 @@ export function Dashboard() {
         </Notice>
       )}
 
-      <div className="grid grid-2" style={{ marginTop: 16 }}>
+      <div className="grid grid-3" style={{ marginTop: 16 }}>
         {CURRENCIES.map((c) => <MoneyCard key={c} c={c} r={byCurrency[c]} />)}
+        <ConsolidatedCard flow={data.flow} />
       </div>
 
       <div className="split" style={{ marginTop: 16 }}>
@@ -292,7 +366,7 @@ export function Dashboard() {
           <Icon name="chevronDown" size={16} className="faint" />
         </summary>
         <div className="table-wrap" style={{ marginTop: 16 }}>
-          <table>
+          <table className="keep-table">
             <thead><tr><th>Profit view</th>{CURRENCIES.map((c) => <th key={c} className="num">{c}</th>)}</tr></thead>
             <tbody>
               <Row label="Gross sales (incoming)" r={byCurrency} k="grossSales" />
@@ -306,7 +380,7 @@ export function Dashboard() {
           </table>
         </div>
         <div className="table-wrap" style={{ marginTop: 14 }}>
-          <table>
+          <table className="keep-table">
             <thead><tr><th>Cash view</th>{CURRENCIES.map((c) => <th key={c} className="num">{c}</th>)}</tr></thead>
             <tbody>
               <Row label="Incoming (sales received)" r={byCurrency} k="incoming" />

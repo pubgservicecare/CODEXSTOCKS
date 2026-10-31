@@ -4,6 +4,8 @@ import { EmptyState, Loading, Money, StatusBadge, SyncDot, useApp, useLoad, fmtD
 import { Icon } from "../icons";
 import { fallbackArt } from "../art";
 import type { AccountListItem } from "../service";
+import { canMarkSold, MarkSoldDialog } from "./MarkSold";
+import { FxEquivalent } from "../fx-ui";
 
 type SortKey = "title" | "status" | "purchase_cost_minor" | "list_price_minor" | "created_at" | "updated_at";
 type View = "grid" | "list";
@@ -32,6 +34,7 @@ export function AccountsPage() {
   const [currency, setCurrency] = useState("all");
   const [view, setView] = useState<View>(savedView);
   const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: "created_at", dir: -1 });
+  const [selling, setSelling] = useState<AccountListItem | null>(null);
 
   const changeView = (v: View) => {
     setView(v);
@@ -146,7 +149,8 @@ export function AccountsPage() {
           {rows.map((a, i) => {
             const img = accountThumb(a);
             return (
-              <Link key={a.id} to={`/accounts/${a.id}`} className="inv-card" data-account-row>
+              <div key={a.id} className="inv-card" data-account-row>
+                <Link to={`/accounts/${a.id}`} className="inv-link">
                 <div className="media">
                   <img src={img ?? fallbackArt(a.id, i)} alt="" loading="lazy" />
                   <StatusBadge status={a.status} className="status-chip chip-solid" />
@@ -160,6 +164,7 @@ export function AccountsPage() {
                   <div className="foot">
                     <div>
                       <div className="price">{a.list_price_minor === null ? <span className="faint" style={{ fontSize: 14, fontWeight: 550 }}>No price set</span> : <Money minor={a.list_price_minor} currency={a.list_currency} />}</div>
+                      <FxEquivalent minor={a.list_price_minor} currency={a.list_currency} className="small faint" />
                       <div className="small faint">Cost <Money minor={a.purchase_cost_minor} currency={a.purchase_currency} /></div>
                     </div>
                     {a.published && a.status === "available" ? <span className="badge gold"><Icon name="globe" size={12} /> Live</span> : null}
@@ -169,14 +174,20 @@ export function AccountsPage() {
                     <span><Icon name="history" size={13} />{fmtDate(a.created_at)}</span>
                   </div>
                 </div>
-              </Link>
+                </Link>
+                {canMarkSold(a) && (
+                  <div className="inv-actions">
+                    <button className="btn sm primary" onClick={() => setSelling(a)}><Icon name="sales" size={14} /> Mark as Sold</button>
+                  </div>
+                )}
+              </div>
             );
           })}
         </div>
       )}
 
       {data && rows.length > 0 && view === "list" && (
-        <div className="table-wrap">
+        <div className="table-wrap table-cards">
           <table>
             <thead>
               <tr>
@@ -187,6 +198,7 @@ export function AccountsPage() {
                 {th("purchase_cost_minor", "Cost", true)}
                 {th("list_price_minor", "Price", true)}
                 {th("created_at", "Added")}
+                <th><span className="sr-only">Actions</span></th>
               </tr>
             </thead>
             <tbody>
@@ -194,7 +206,7 @@ export function AccountsPage() {
                 const img = accountThumb(a, 160, 100);
                 return (
                   <tr key={a.id} className="clickable" onClick={() => nav(`/accounts/${a.id}`)} data-account-row>
-                    <td>
+                    <td className="cell-main">
                       <div className="cell-media">
                         <img src={img ?? fallbackArt(a.id)} alt="" loading="lazy" style={img ? undefined : { opacity: 0.6 }} />
                         <div className="t">
@@ -203,12 +215,19 @@ export function AccountsPage() {
                         </div>
                       </div>
                     </td>
-                    <td><StatusBadge status={a.status} /></td>
-                    <td>{a.published ? <span className="badge gold">Published</span> : <span className="faint small">Private</span>}</td>
-                    <td>{a.link_count ? <span className="small">{a.link_count}/4</span> : <span className="badge bad">None</span>}</td>
-                    <td className="num"><Money minor={a.purchase_cost_minor} currency={a.purchase_currency} /></td>
-                    <td className="num"><b><Money minor={a.list_price_minor} currency={a.list_currency} /></b></td>
-                    <td className="small muted">{fmtDate(a.created_at)}</td>
+                    <td data-label="Status"><StatusBadge status={a.status} /></td>
+                    <td data-label="Website">{a.published ? <span className="badge gold">Published</span> : <span className="faint small">Private</span>}</td>
+                    <td data-label="Links">{a.link_count ? <span className="small">{a.link_count}/4</span> : <span className="badge bad">None</span>}</td>
+                    <td className="num" data-label="Cost"><Money minor={a.purchase_cost_minor} currency={a.purchase_currency} /></td>
+                    <td className="num" data-label="Price">
+                      <span className="price-cell"><b><Money minor={a.list_price_minor} currency={a.list_currency} /></b><FxEquivalent minor={a.list_price_minor} currency={a.list_currency} className="small faint" /></span>
+                    </td>
+                    <td className="small muted" data-label="Added">{fmtDate(a.created_at)}</td>
+                    <td className="row-actions">
+                      {canMarkSold(a) && (
+                        <button className="btn sm" onClick={(e) => (e.stopPropagation(), setSelling(a))}><Icon name="sales" size={14} /> Mark as Sold</button>
+                      )}
+                    </td>
                   </tr>
                 );
               })}
@@ -216,6 +235,7 @@ export function AccountsPage() {
           </table>
         </div>
       )}
+      {selling && <MarkSoldDialog account={selling} onClose={() => setSelling(null)} />}
     </>
   );
 }

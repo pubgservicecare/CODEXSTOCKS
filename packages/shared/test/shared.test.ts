@@ -27,6 +27,7 @@ function account(over: Partial<Account> = {}): Account {
     published: false, purchase_cost_minor: 0, purchase_currency: "PKR", purchased_at: null, purchase_reference: null,
     list_price_minor: null, list_currency: null, description_public: "", youtube_url: null, image_url: null,
     image_file_id: null, old_owner_name: null, old_owner_whatsapp: null, show_old_owner_public: false, internal_notes: "",
+    purchase_fx_micro: null, purchase_fx_source: null, purchase_fx_at: null,
     ...over,
   };
 }

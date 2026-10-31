@@ -3,7 +3,8 @@ import { whatsappLink } from "@codex/shared";
 import { ART, ART_ALT } from "@codex/ui/art";
 import { Icon } from "@codex/ui/icons";
 import { listings, settings } from "../../lib/public";
-import { ListingCard, WhatsAppIcon } from "./ui";
+import { displayCurrency, storefrontFx } from "../../lib/currency";
+import { ListingCard, RateNote, WhatsAppIcon, type PriceView } from "./ui";
 
 export const dynamic = "force-dynamic";
 
@@ -18,9 +19,12 @@ export default async function Home({ searchParams }: { searchParams: Promise<Rec
   let rows: Awaited<ReturnType<typeof listings>> = [];
   let failed = false;
   let store = { store_name: "CODE X STOCKS", store_tagline: "Verified PUBG Mobile accounts", whatsapp: null as string | null };
+  const [fx, display] = await Promise.all([storefrontFx(), displayCurrency()]);
+  const view: PriceView = { display: display.currency, fx };
   try {
-    [rows, store] = await Promise.all([listings({ q, currency, sort }), settings()]);
-  } catch {
+    [rows, store] = await Promise.all([listings({ q, currency, sort, usdPkrMicro: fx?.usd_pkr_micro }), settings()]);
+  } catch (e) {
+    console.error("storefront: listings unavailable:", e instanceof Error ? e.message : e);
     failed = true;
   }
   const wa = whatsappLink(store.whatsapp, "Hi CODE X STOCKS, I'd like to ask about your PUBG Mobile accounts.");
@@ -61,7 +65,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<Rec
         <div className="wrap">
           <div><Icon name="shieldCheck" size={20} /><span><b>Hand-checked</b> Every account is reviewed by the owner before it is listed.</span></div>
           <div><WhatsAppIcon size={20} /><span><b>Direct on WhatsApp</b> Talk to the owner; payment and handover are arranged with you.</span></div>
-          <div><Icon name="tag" size={20} /><span><b>Clear prices</b> Listed in PKR or USD, exactly as you will pay.</span></div>
+          <div><Icon name="tag" size={20} /><span><b>Clear prices</b> Every price in PKR and USD; the owner&apos;s listed price is what you pay.</span></div>
         </div>
       </section>
 
@@ -78,10 +82,10 @@ export default async function Home({ searchParams }: { searchParams: Promise<Rec
             <Icon name="search" size={18} />
             <input name="q" defaultValue={q} placeholder="Search: Conqueror, Glacier, X-Suit…" aria-label="Search accounts" />
           </label>
-          <select name="currency" defaultValue={currency} aria-label="Currency">
-            <option value="">All currencies</option>
-            <option value="PKR">PKR</option>
-            <option value="USD">USD</option>
+          <select name="currency" defaultValue={currency} aria-label="Listed in">
+            <option value="">Listed in any currency</option>
+            <option value="PKR">Listed in PKR</option>
+            <option value="USD">Listed in USD</option>
           </select>
           <select name="sort" defaultValue={sort} aria-label="Sort">
             <option value="">Newest</option>
@@ -107,9 +111,10 @@ export default async function Home({ searchParams }: { searchParams: Promise<Rec
           </div>
         ) : (
           <div className="grid">
-            {rows.map((l, i) => <ListingCard key={l.id} l={l} index={i} />)}
+            {rows.map((l, i) => <ListingCard key={l.id} l={l} index={i} view={view} />)}
           </div>
         )}
+        {!failed && rows.length > 0 && <RateNote fx={fx} />}
       </section>
 
       <section className="wrap section" id="how">

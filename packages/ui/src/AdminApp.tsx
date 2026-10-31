@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { BrowserRouter, HashRouter, Navigate, NavLink, Route, Routes } from "react-router-dom";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { BrowserRouter, HashRouter, Navigate, NavLink, Route, Routes, useLocation } from "react-router-dom";
 import { AppCtx, errMsg, Field, Modal, Notice, useLoad } from "./components";
 import { Icon, LogoMark, type IconName } from "./icons";
 import { ART } from "./art";
@@ -15,6 +15,7 @@ import { DevicesPage } from "./pages/Devices";
 import { SettingsPage } from "./pages/Settings";
 import { BackupPage } from "./pages/Backup";
 import { HistoryPage } from "./pages/History";
+import { FxProvider } from "./fx-ui";
 
 export function Brand({ sub }: { sub?: string }) {
   return (
@@ -122,9 +123,9 @@ function SyncBadge({ s }: { s: SyncSummary | null }) {
   else if (issues) (cls = "bad"), (text = `${issues} sync issue${issues > 1 ? "s" : ""}`), (icon = "alert");
   else if (queued) (cls = "warn"), (text = `${queued} waiting to sync`), (icon = "sync");
   return (
-    <NavLink to="/sync" className={`status-pill ${cls}`} title="Sync status">
+    <NavLink to="/sync" className={`status-pill ${cls}`} title="Sync status" aria-label={`Sync status: ${text}`}>
       <Icon name={icon} size={15} />
-      {text}
+      <span className="pill-text">{text}</span>
     </NavLink>
   );
 }
@@ -136,8 +137,45 @@ const NAV: { group: string; items: [string, string, IconName][] }[] = [
   { group: "System", items: [["/devices", "Devices", "devices"], ["/settings", "Settings", "settings"], ["/backup", "Backup", "backup"]] },
 ];
 
+/**
+ * On phones, wide tables are shown as stacked cards (CSS). Each cell gets its column name as a
+ * data-label so no column is hidden; this fills the labels for every table in the page.
+ */
+function useTableLabels(root: React.RefObject<HTMLElement | null>) {
+  useEffect(() => {
+    const el = root.current;
+    if (!el) return;
+    const label = () => {
+      for (const table of el.querySelectorAll<HTMLTableElement>(".table-wrap table")) {
+        const heads = [...table.querySelectorAll("thead th")].map((th) => th.textContent?.trim() ?? "");
+        for (const tr of table.querySelectorAll("tbody tr"))
+          [...tr.children].forEach((td, i) => {
+            if (!td.hasAttribute("data-label") && heads[i]) td.setAttribute("data-label", heads[i]);
+          });
+      }
+    };
+    label();
+    const obs = new MutationObserver(label);
+    obs.observe(el, { childList: true, subtree: true });
+    return () => obs.disconnect();
+  }, [root]);
+}
+
+const TABS: [string, string, IconName][] = [["/", "Home", "dashboard"], ["/accounts", "Accounts", "accounts"], ["/accounts/new", "New", "plus"], ["/sales", "Sales", "sales"]];
+
 function Shell({ children, svc }: { children: ReactNode; svc: DataService }) {
   const [sync, setSync] = useState<SyncSummary | null>(null);
+  const [drawer, setDrawer] = useState(false);
+  const loc = useLocation();
+  const mainRef = useRef<HTMLElement>(null);
+  useTableLabels(mainRef);
+  useEffect(() => setDrawer(false), [loc.pathname]);
+  useEffect(() => {
+    if (!drawer) return;
+    const esc = (e: KeyboardEvent) => e.key === "Escape" && setDrawer(false);
+    window.addEventListener("keydown", esc);
+    return () => window.removeEventListener("keydown", esc);
+  }, [drawer]);
   const [unlocked, setUnlocked] = useState(svc.vaultUnlocked());
   const { data: conflicts } = useLoad(() => svc.conflicts().catch(() => []), []);
   useEffect(() => {
@@ -155,9 +193,13 @@ function Shell({ children, svc }: { children: ReactNode; svc: DataService }) {
   }, [svc]);
   const user = svc.username() ?? "owner";
   return (
-    <div className="cx-shell">
-      <aside className="cx-side">
-        <Brand sub={svc.kind === "desktop" ? "Windows desktop" : "Admin website"} />
+    <div className={`cx-shell ${drawer ? "drawer-open" : ""}`}>
+      {drawer && <div className="cx-scrim" onClick={() => setDrawer(false)} aria-hidden="true" />}
+      <aside className="cx-side" id="cx-drawer" aria-label="Navigation">
+        <div className="cx-side-head">
+          <Brand sub={svc.kind === "desktop" ? "Windows desktop" : "Admin website"} />
+          <button className="btn ghost icon-only cx-drawer-close" onClick={() => setDrawer(false)} aria-label="Close menu"><Icon name="x" size={18} /></button>
+        </div>
         <nav className="cx-nav" aria-label="Main">
           {NAV.map((g) => (
             <div key={g.group} style={{ display: "contents" }}>
@@ -183,25 +225,42 @@ function Shell({ children, svc }: { children: ReactNode; svc: DataService }) {
           </button>
         </div>
       </aside>
-      <main className="cx-main">
+      <main className="cx-main" ref={mainRef}>
         <div className="cx-top">
+          <button className="btn ghost icon-only cx-menu" onClick={() => setDrawer(true)} aria-label="Open menu" aria-expanded={drawer} aria-controls="cx-drawer">
+            <Icon name="menu" size={20} />
+          </button>
+          <span className="cx-top-logo"><LogoMark size={26} /></span>
           <SyncBadge s={sync} />
           <span className="spacer" />
           {unlocked ? (
-            <button className="status-pill vault-btn unlocked" onClick={() => svc.lockVault()} title="Clear decrypted keys from memory">
-              <Icon name="unlock" size={15} /> Vault unlocked · Lock now
+            <button className="status-pill vault-btn unlocked" onClick={() => svc.lockVault()} title="Clear decrypted keys from memory" aria-label="Vault unlocked. Lock now">
+              <Icon name="unlock" size={15} /> <span className="pill-text">Vault unlocked · Lock now</span>
             </button>
           ) : (
-            <span className="status-pill vault-btn" title="Stored passwords and backup codes are encrypted">
-              <Icon name="lock" size={15} /> Vault locked
+            <span className="status-pill vault-btn" title="Stored passwords and backup codes are encrypted" aria-label="Vault locked">
+              <Icon name="lock" size={15} /> <span className="pill-text">Vault locked</span>
             </span>
           )}
-          <button className="btn sm ghost" onClick={() => void svc.logout()}>
+          <button className="btn sm ghost cx-top-signout" onClick={() => void svc.logout()}>
             <Icon name="logout" size={15} /> Sign out
           </button>
         </div>
         <div className="cx-page">{children}</div>
       </main>
+      <nav className="cx-tabbar" aria-label="Quick navigation">
+        {TABS.map(([to, label, icon]) => (
+          <NavLink key={to} to={to} end className={to === "/accounts/new" ? "tab-new" : undefined}>
+            <Icon name={icon} size={to === "/accounts/new" ? 22 : 20} />
+            <span>{label}</span>
+          </NavLink>
+        ))}
+        <button type="button" onClick={() => setDrawer(true)} aria-label="Open menu" aria-expanded={drawer} aria-controls="cx-drawer">
+          <Icon name="menu" size={20} />
+          <span>Menu</span>
+          {conflicts?.length ? <span className="count" aria-label={`${conflicts.length} conflicts`}>{conflicts.length}</span> : null}
+        </button>
+      </nav>
     </div>
   );
 }
@@ -232,6 +291,7 @@ export function AdminApp({ svc, router = "hash", basename }: { svc: DataService;
 
   return (
     <AppCtx.Provider value={ctx}>
+      <FxProvider svc={svc}>
       <Router basename={router === "browser" ? basename : undefined}>
         <Shell svc={svc}>
           <Routes>
@@ -251,6 +311,7 @@ export function AdminApp({ svc, router = "hash", basename }: { svc: DataService;
           </Routes>
         </Shell>
       </Router>
+      </FxProvider>
       {unlockReq && (
         <UnlockDialog
           svc={svc}

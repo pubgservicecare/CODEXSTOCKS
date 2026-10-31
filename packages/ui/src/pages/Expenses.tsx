@@ -1,6 +1,17 @@
 import { useState } from "react";
 import { Icon } from "../icons";
-import { CURRENCIES, EXPENSE_CATEGORIES, minorToDecimalString, parseMoney, type Currency, type Expense } from "@codex/shared";
+import {
+  CURRENCIES,
+  EXPENSE_CATEGORIES,
+  minorToDecimalString,
+  parseMoney,
+  snapshotFromQuote,
+  type Currency,
+  type Expense,
+  type ExpenseInput,
+  type FxQuote,
+} from "@codex/shared";
+import { FxPreview, useFx } from "../fx-ui";
 import { Confirm, EmptyState, errMsg, Field, fmtDate, Loading, Modal, Money, todayIso, useAction, useApp, useLoad } from "../components";
 
 const LABEL: Record<string, string> = {
@@ -59,6 +70,20 @@ export function ExpensesPage() {
   );
 }
 
+/**
+ * Exchange-rate snapshot for an expense. Only USD expenses need one (PKR is the reporting currency).
+ * An edit that keeps the same USD amount keeps the rate recorded originally; otherwise the current
+ * reference rate is recorded. Without any rate the expense stays USD-only (left out of PKR totals).
+ */
+export function expenseFx(input: Pick<ExpenseInput, "amount_minor" | "currency">, prev: Expense | null, quote: FxQuote | null): Pick<ExpenseInput, "fx_usd_pkr_micro" | "fx_source" | "fx_at"> {
+  if (input.currency !== "USD") return { fx_usd_pkr_micro: null, fx_source: null, fx_at: null };
+  if (prev?.fx_usd_pkr_micro && prev.currency === "USD" && (prev.amount_minor === input.amount_minor || !quote))
+    return { fx_usd_pkr_micro: prev.fx_usd_pkr_micro, fx_source: prev.fx_source, fx_at: prev.fx_at };
+  if (!quote) return { fx_usd_pkr_micro: null, fx_source: null, fx_at: null };
+  const snap = snapshotFromQuote(quote);
+  return { fx_usd_pkr_micro: snap.usd_pkr_micro, fx_source: snap.source, fx_at: snap.at };
+}
+
 function ExpenseForm({ expense, accounts, onClose }: { expense: Expense | null; accounts: { id: string; title: string }[]; onClose: () => void }) {
   const { svc } = useApp();
   const { busy, run } = useAction();
@@ -71,6 +96,7 @@ function ExpenseForm({ expense, accounts, onClose }: { expense: Expense | null; 
     account_id: expense?.account_id ?? "",
   });
   const [err, setErr] = useState<string | null>(null);
+  const { quote } = useFx();
   return (
     <Modal title={expense ? "Edit expense" : "Add expense"} icon="expenses" onClose={onClose}>
       <div className="form-grid">
@@ -84,6 +110,10 @@ function ExpenseForm({ expense, accounts, onClose }: { expense: Expense | null; 
         <Field label="Currency *">
           <select value={f.currency} onChange={(e) => setF({ ...f, currency: e.target.value as Currency })}>{CURRENCIES.map((c) => <option key={c}>{c}</option>)}</select>
         </Field>
+        <div className="full">
+          <FxPreview amount={f.amount} currency={f.currency} label="Expense" />
+          {f.currency === "USD" && <small className="hint">The reference rate is saved with this expense for your PKR-equivalent reports.</small>}
+        </div>
         <Field label="Description" className="full"><input value={f.description} onChange={(e) => setF({ ...f, description: e.target.value })} /></Field>
         <Field label="Related account" className="full">
           <select value={f.account_id} onChange={(e) => setF({ ...f, account_id: e.target.value })}>
@@ -106,6 +136,7 @@ function ExpenseForm({ expense, accounts, onClose }: { expense: Expense | null; 
                 expected_rev: svc.kind === "web" ? expense?.rev : undefined,
                 expense: { incurred_at: f.date, amount_minor: parseMoney(f.amount, f.currency), currency: f.currency, category: f.category, description: f.description, account_id: f.account_id || null, sale_id: expense?.sale_id ?? null },
               };
+              Object.assign(args.expense, expenseFx(args.expense, expense, quote));
               const ok = await run(() => svc.exec("saveExpense", args), "Expense saved");
               if (ok !== undefined) onClose();
             } catch (e) {

@@ -1,7 +1,6 @@
-import { useState, type FormEvent, type ReactNode } from "react";
-import { CURRENCIES, type Currency } from "@codex/shared";
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import type { AppCore } from "@codex/local-core";
-import { AuthShell, Brand, Field, Icon, Notice, type IconName } from "@codex/ui";
+import { AuthShell, Field, Icon, Notice } from "@codex/ui";
 import { openBackupFile } from "./platform";
 
 function msg(e: unknown) {
@@ -16,87 +15,77 @@ export function AuthCard({ children, steps, step }: { children: ReactNode; steps
   );
 }
 
-function Choice({ icon, title, body, onClick, primary }: { icon: IconName; title: string; body: string; onClick: () => void; primary?: boolean }) {
-  return (
-    <button type="button" className={`choice ${primary ? "primary" : ""}`} onClick={onClick}>
-      <span className={`icon-tile ${primary ? "gold" : ""}`} style={{ width: 40, height: 40 }}><Icon name={icon} size={18} /></span>
-      <span><b>{title}</b><small>{body}</small></span>
-      <Icon name="chevronRight" size={18} />
-    </button>
-  );
+/** Shown when a never-enrolled PC cannot reach the server. Honest: there is no offline first sign-in. */
+export const FIRST_SIGNIN_OFFLINE = "Connect to the internet to sign in and authorise this PC for the first time.";
+
+function signInError(e: unknown): string {
+  const status = (e as { status?: number })?.status;
+  if (status === 0) return FIRST_SIGNIN_OFFLINE;
+  return msg(e);
 }
 
-void Brand;
+function useOnline() {
+  const [online, setOnline] = useState(() => (typeof navigator === "undefined" ? true : navigator.onLine));
+  useEffect(() => {
+    const on = () => setOnline(true);
+    const off = () => setOnline(false);
+    window.addEventListener("online", on);
+    window.addEventListener("offline", off);
+    return () => {
+      window.removeEventListener("online", on);
+      window.removeEventListener("offline", off);
+    };
+  }, []);
+  return online;
+}
 
-type Mode = "choose" | "cloud-new" | "cloud-join" | "local" | "restore";
-
-export function SetupWizard({ core, defaultApi, onRecoveryKey }: { core: AppCore; defaultApi: string; onRecoveryKey: (k: string) => void }) {
-  const [mode, setMode] = useState<Mode>("choose");
-  const [f, setF] = useState({
-    apiBase: defaultApi, setupToken: "", username: "", password: "", password2: "", vault: "", vault2: "", currency: "PKR" as Currency,
-  });
+/**
+ * Fresh installation: the single owner signs in with their existing cloud username and password.
+ * Signing in authorises (enrols) this PC as a device and downloads the inventory. There is no
+ * registration, no second-owner creation and no offline bypass; restoring an encrypted backup is
+ * the only secondary path and it never creates a cloud owner.
+ */
+export function OwnerSignIn({ core, defaultApi }: { core: AppCore; defaultApi: string }) {
+  const [mode, setMode] = useState<"login" | "restore">("login");
+  const [f, setF] = useState({ apiBase: defaultApi, username: "", password: "", backupPassword: "" });
+  const [advanced, setAdvanced] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const online = useOnline();
   const up = (p: Partial<typeof f>) => setF((x) => ({ ...x, ...p }));
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     setError(null);
-    if (mode !== "cloud-join") {
-      if (f.password !== f.password2) return setError("Login passwords do not match");
-      if (f.vault !== f.vault2) return setError("Vault passphrases do not match");
-    }
     setBusy(true);
     try {
-      if (mode === "local") {
-        const r = await core.setupLocal({ username: f.username, password: f.password, vaultPassphrase: f.vault, currency: f.currency });
-        onRecoveryKey(r.recoveryKey);
-      } else if (mode === "cloud-new") {
-        const r = await core.setupCloud({ apiBase: f.apiBase, setupToken: f.setupToken, username: f.username, password: f.password, vaultPassphrase: f.vault, currency: f.currency });
-        onRecoveryKey(r.recoveryKey);
-      } else {
-        await core.connectExisting({ apiBase: f.apiBase, username: f.username, password: f.password });
-      }
+      await core.connectExisting({ apiBase: f.apiBase.trim(), username: f.username.trim(), password: f.password });
     } catch (err) {
-      setError(msg(err));
+      setError(signInError(err));
     } finally {
       setBusy(false);
     }
   };
 
-  if (mode === "choose")
-    return (
-      <AuthCard steps={3} step={0}>
-        <h1>Welcome</h1>
-        <p className="lede">Set up this PC. All inventory work happens locally and keeps working without internet.</p>
-        <div className="auth-choices">
-          <Choice primary icon="cloud" title="First PC" body="Create my cloud owner account" onClick={() => setMode("cloud-new")} />
-          <Choice icon="devices" title="Another PC" body="Sign in to my existing cloud account" onClick={() => setMode("cloud-join")} />
-          <Choice icon="wifiOff" title="No internet right now" body="Local-only setup — connect to the cloud later" onClick={() => setMode("local")} />
-          <Choice icon="backup" title="Restore a backup" body="From an encrypted .cxbackup file" onClick={() => setMode("restore")} />
-        </div>
-      </AuthCard>
-    );
-
   if (mode === "restore")
     return (
-      <AuthCard steps={3} step={1}>
-        <h1>Restore from backup</h1>
-        <p className="lede">After restoring, sign in with the login password that was valid when the backup was made.</p>
-        <Field label="Backup password"><input type="password" value={f.password} onChange={(e) => up({ password: e.target.value })} autoFocus /></Field>
+      <AuthCard>
+        <h1>Restore encrypted backup</h1>
+        <p className="lede">Recovery only. Restores a .cxbackup file onto this PC. Afterwards, sign in with the login password that was valid when the backup was made.</p>
+        <Field label="Backup password"><input type="password" value={f.backupPassword} onChange={(e) => up({ backupPassword: e.target.value })} autoFocus autoComplete="off" /></Field>
         {error && <Notice kind="bad">{error}</Notice>}
-        <div className="row">
-          <button type="button" className="btn ghost" onClick={() => setMode("choose")}>Back</button>
-          <span className="grow" />
+        <div className="auth-actions">
+          <button type="button" className="btn ghost" onClick={() => (setMode("login"), setError(null))}><Icon name="chevronLeft" size={14} /> Back to sign in</button>
           <button
+            type="button"
             className="btn primary"
-            disabled={busy || !f.password}
+            disabled={busy || !f.backupPassword}
             onClick={async () => {
               setError(null);
               setBusy(true);
               try {
                 const text = await openBackupFile();
-                if (text) await core.restoreBackup(text, f.password);
+                if (text) await core.restoreBackup(text, f.backupPassword);
               } catch (err) {
                 setError(msg(err));
               } finally {
@@ -111,45 +100,31 @@ export function SetupWizard({ core, defaultApi, onRecoveryKey }: { core: AppCore
     );
 
   return (
-    <AuthCard steps={3} step={1}>
-      <h1>{mode === "cloud-new" ? "Create cloud owner account" : mode === "cloud-join" ? "Connect this PC" : "Local-only setup"}</h1>
+    <AuthCard>
+      <div className="auth-eyebrow"><Icon name="lock" size={13} /> Private · owner only</div>
+      <h1>Owner sign in</h1>
+      <p className="lede">Sign in with your CODE X STOCKS owner account to authorise this PC and download your inventory.</p>
+      {!online && <Notice kind="warn">{FIRST_SIGNIN_OFFLINE}</Notice>}
       <form onSubmit={submit}>
-        {mode !== "local" && (
-          <Field label="Server URL"><input value={f.apiBase} onChange={(e) => up({ apiBase: e.target.value })} required /></Field>
-        )}
-        {mode === "cloud-new" && (
-          <Field label="Server setup code" hint="The one-time SETUP_TOKEN configured on your server (see docs/DEPLOYMENT.md).">
-            <input value={f.setupToken} onChange={(e) => up({ setupToken: e.target.value })} required autoComplete="off" />
+        <Field label="Owner username"><input value={f.username} onChange={(e) => up({ username: e.target.value })} required autoFocus autoComplete="username" autoCapitalize="none" spellCheck={false} /></Field>
+        <Field label="Login password"><input type="password" value={f.password} onChange={(e) => up({ password: e.target.value })} required autoComplete="current-password" /></Field>
+        {advanced ? (
+          <Field label="Server address" hint="Only change this if you run your own server.">
+            <input value={f.apiBase} onChange={(e) => up({ apiBase: e.target.value })} required spellCheck={false} />
           </Field>
-        )}
-        <Field label="Owner username"><input value={f.username} onChange={(e) => up({ username: e.target.value })} required autoFocus autoComplete="username" /></Field>
-        <Field label="Login password" hint={mode === "cloud-join" ? undefined : "10+ characters, mixed letters, numbers and symbols"}>
-          <input type="password" value={f.password} onChange={(e) => up({ password: e.target.value })} required autoComplete={mode === "cloud-join" ? "current-password" : "new-password"} />
-        </Field>
-        {mode !== "cloud-join" && (
-          <>
-            <Field label="Repeat login password"><input type="password" value={f.password2} onChange={(e) => up({ password2: e.target.value })} required /></Field>
-            <Notice kind="info" className="small">
-              The <b>vault passphrase</b> encrypts stored game-account passwords and backup codes. It must differ from your login password,
-              and it never leaves your devices. You will also get a <b>recovery key</b>.
-            </Notice>
-            <Field label="Vault passphrase" hint="12+ characters"><input type="password" value={f.vault} onChange={(e) => up({ vault: e.target.value })} required autoComplete="new-password" /></Field>
-            <Field label="Repeat vault passphrase"><input type="password" value={f.vault2} onChange={(e) => up({ vault2: e.target.value })} required /></Field>
-            <Field label="Default reporting currency">
-              <select value={f.currency} onChange={(e) => up({ currency: e.target.value as Currency })}>{CURRENCIES.map((c) => <option key={c}>{c}</option>)}</select>
-            </Field>
-          </>
-        )}
-        {mode === "cloud-join" && (
-          <p className="muted small">After signing in, your inventory downloads. Stored passwords stay encrypted until you unlock the vault with your vault passphrase.</p>
-        )}
+        ) : null}
         {error && <Notice kind="bad">{error}</Notice>}
-        <div className="row">
-          <button type="button" className="btn ghost" onClick={() => setMode("choose")}>Back</button>
-          <span className="grow" />
-          <button className="btn primary" disabled={busy}>{busy ? "Working…" : mode === "cloud-join" ? "Sign in & download" : "Create"}</button>
-        </div>
+        <button className="btn primary lg auth-submit" disabled={busy}>
+          <Icon name="lock" size={16} /> {busy ? "Signing in and authorising this PC…" : "Sign In"}
+        </button>
       </form>
+      <p className="small muted" style={{ marginTop: 14 }}>
+        Stored game passwords and backup codes stay encrypted until you unlock the vault with your vault passphrase.
+      </p>
+      <div className="auth-links">
+        <button type="button" className="btn ghost sm" onClick={() => (setMode("restore"), setError(null))}><Icon name="backup" size={14} /> Restore encrypted backup</button>
+        <button type="button" className="btn ghost sm" onClick={() => setAdvanced((v) => !v)} aria-expanded={advanced}>{advanced ? "Hide server address" : "Server address"}</button>
+      </div>
     </AuthCard>
   );
 }
@@ -157,7 +132,7 @@ export function SetupWizard({ core, defaultApi, onRecoveryKey }: { core: AppCore
 export function RecoveryKeyScreen({ recoveryKey, onDone }: { recoveryKey: string; onDone: () => void }) {
   const [ok, setOk] = useState(false);
   return (
-    <AuthCard steps={3} step={2}>
+    <AuthCard>
       <h1>Your recovery key</h1>
       <p>
         Write this key down or print it, and store it offline (not on this PC). It is shown <b>only once</b>.
@@ -220,8 +195,9 @@ export function LoginScreen({ core, username, onLoggedIn }: { core: AppCore; use
 
   return (
     <AuthCard>
-      <h1>Welcome back</h1>
-      <p className="lede">Works offline on this PC. When online, your cloud session is refreshed automatically.</p>
+      <div className="auth-eyebrow"><Icon name="lock" size={13} /> Private · owner only</div>
+      <h1>Owner sign in</h1>
+      <p className="lede">This PC is already authorised, so sign-in works offline. When online, your cloud session is refreshed automatically.</p>
       <form
         onSubmit={async (e) => {
           e.preventDefault();
@@ -238,13 +214,13 @@ export function LoginScreen({ core, username, onLoggedIn }: { core: AppCore; use
           }
         }}
       >
-        <Field label="Username"><input value={u} onChange={(e) => setU(e.target.value)} autoComplete="username" required /></Field>
-        <Field label="Password"><input type="password" value={p} onChange={(e) => setP(e.target.value)} autoFocus autoComplete="current-password" required /></Field>
+        <Field label="Owner username"><input value={u} onChange={(e) => setU(e.target.value)} autoComplete="username" autoCapitalize="none" spellCheck={false} required /></Field>
+        <Field label="Login password"><input type="password" value={p} onChange={(e) => setP(e.target.value)} autoFocus autoComplete="current-password" required /></Field>
         {error && <Notice kind="bad">{error}</Notice>}
         <div className="row">
           <button type="button" className="btn ghost sm" onClick={() => setReset(true)}>Forgot password?</button>
           <span className="grow" />
-          <button className="btn primary" disabled={busy}><Icon name="lock" size={15} /> {busy ? "Checking…" : "Sign in"}</button>
+          <button className="btn primary" disabled={busy}><Icon name="lock" size={15} /> {busy ? "Checking…" : "Sign In"}</button>
         </div>
       </form>
     </AuthCard>

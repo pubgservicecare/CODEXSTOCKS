@@ -2,6 +2,7 @@ import { z } from "zod";
 import { CURRENCIES, MAX_MINOR } from "./money";
 import { UUID_RE } from "./ids";
 import { EMAIL_RE, PHONE_RE, youtubeId } from "./text";
+import { FX_MAX_MICRO, FX_MIN_MICRO, FX_SOURCE_MANUAL } from "./fx";
 
 /* ------------------------------------------------------------------ */
 /* Enumerations                                                        */
@@ -80,6 +81,22 @@ export const httpsUrlSchema = z
     }
   }, "Must be an https URL");
 
+/**
+ * Exchange-rate snapshot fields (USD/PKR, PKR per 1 USD x1e6) recorded with a transaction.
+ * Default null: rows saved before snapshots existed — or sent by an older app version — stay valid.
+ */
+const fxMicro = z.number().int().min(FX_MIN_MICRO, "Invalid exchange rate").max(FX_MAX_MICRO, "Invalid exchange rate").nullable().default(null);
+const fxText = (max: number) => z.string().max(max).nullable().default(null);
+function checkFx(ctx: z.RefinementCtx, micro: number | null, source: string | null, at: string | null, path: string) {
+  if (micro === null) {
+    if (source !== null || at !== null) ctx.addIssue({ code: "custom", path: [path], message: "Exchange-rate source/time without a rate" });
+    return;
+  }
+  if (!source) ctx.addIssue({ code: "custom", path: [path], message: "Record where the exchange rate came from" });
+  if (!at || !/^\d{4}-\d{2}-\d{2}T/.test(at) || Number.isNaN(Date.parse(at)))
+    ctx.addIssue({ code: "custom", path: [path], message: "Record when the exchange rate applied" });
+}
+
 const meta = {
   id: idSchema,
   rev: z.number().int().min(0),
@@ -115,8 +132,12 @@ export const accountSchema = z
     old_owner_whatsapp: phoneSchema.nullable(),
     show_old_owner_public: z.boolean(),
     internal_notes: z.string().max(20000),
+    purchase_fx_micro: fxMicro,
+    purchase_fx_source: fxText(100),
+    purchase_fx_at: fxText(40),
   })
   .superRefine((a, ctx) => {
+    checkFx(ctx, a.purchase_fx_micro, a.purchase_fx_source, a.purchase_fx_at, "purchase_fx_micro");
     if ((a.list_price_minor === null) !== (a.list_currency === null))
       ctx.addIssue({ code: "custom", path: ["list_currency"], message: "Sale price and sale currency go together" });
     if ((a.image_url === null) !== (a.image_file_id === null))
@@ -207,7 +228,8 @@ export const backupCodeSchema = z
   });
 export type BackupCode = z.infer<typeof backupCodeSchema>;
 
-export const saleSchema = z.object({
+export const saleSchema = z
+  .object({
   ...meta,
   account_id: idSchema,
   sold_at: isoSchema,
@@ -221,7 +243,18 @@ export const saleSchema = z.object({
   reference: optText(200),
   notes: optText(4000),
   status: z.enum(SALE_STATUSES),
-});
+  /** USD/PKR snapshot used for this sale (cross-currency profit and PKR-equivalent reporting). */
+  fx_usd_pkr_micro: fxMicro,
+  fx_source: fxText(100),
+  fx_at: fxText(40),
+  /** Required when the owner typed a rate instead of using the reference quote. */
+  fx_override_reason: fxText(500),
+  })
+  .superRefine((s, ctx) => {
+    checkFx(ctx, s.fx_usd_pkr_micro, s.fx_source, s.fx_at, "fx_usd_pkr_micro");
+    if (s.fx_source === FX_SOURCE_MANUAL && !(s.fx_override_reason ?? "").trim())
+      ctx.addIssue({ code: "custom", path: ["fx_override_reason"], message: "Give a reason for the manual exchange rate" });
+  });
 export type Sale = z.infer<typeof saleSchema>;
 
 export const refundSchema = z.object({
@@ -245,7 +278,10 @@ export const expenseSchema = z.object({
   description: z.string().max(1000),
   account_id: idSchema.nullable(),
   sale_id: idSchema.nullable(),
-});
+  fx_usd_pkr_micro: fxMicro,
+  fx_source: fxText(100),
+  fx_at: fxText(40),
+}).superRefine((e, ctx) => checkFx(ctx, e.fx_usd_pkr_micro, e.fx_source, e.fx_at, "fx_usd_pkr_micro"));
 export type Expense = z.infer<typeof expenseSchema>;
 
 export const auditEventSchema = z.object({
@@ -324,6 +360,7 @@ export const ENTITY_FIELDS: { [E in Entity]: Record<keyof EntityRowMap[E] & stri
     purchased_at: "text", purchase_reference: "text", list_price_minor: "int", list_currency: "text",
     description_public: "text", youtube_url: "text", image_url: "text", image_file_id: "text",
     old_owner_name: "text", old_owner_whatsapp: "text", show_old_owner_public: "bool", internal_notes: "text",
+    purchase_fx_micro: "int", purchase_fx_source: "text", purchase_fx_at: "text",
   },
   login_links: {
     id: "text", rev: "int", deleted: "bool", created_at: "text", updated_at: "text",
@@ -349,6 +386,7 @@ export const ENTITY_FIELDS: { [E in Entity]: Record<keyof EntityRowMap[E] & stri
     id: "text", rev: "int", deleted: "bool", created_at: "text", updated_at: "text",
     account_id: "text", sold_at: "text", amount_minor: "int", currency: "text", exchange_rate_micro: "int",
     buyer_name: "text", buyer_contact: "text", channel: "text", reference: "text", notes: "text", status: "text",
+    fx_usd_pkr_micro: "int", fx_source: "text", fx_at: "text", fx_override_reason: "text",
   },
   refunds: {
     id: "text", rev: "int", deleted: "bool", created_at: "text", updated_at: "text",
@@ -359,6 +397,7 @@ export const ENTITY_FIELDS: { [E in Entity]: Record<keyof EntityRowMap[E] & stri
     id: "text", rev: "int", deleted: "bool", created_at: "text", updated_at: "text",
     incurred_at: "text", amount_minor: "int", currency: "text", category: "text", description: "text",
     account_id: "text", sale_id: "text",
+    fx_usd_pkr_micro: "int", fx_source: "text", fx_at: "text",
   },
   audit_events: {
     id: "text", rev: "int", deleted: "bool", created_at: "text", updated_at: "text",

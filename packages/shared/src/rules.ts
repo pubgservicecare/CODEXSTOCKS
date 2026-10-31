@@ -1,3 +1,4 @@
+import { saleRateFromUsdPkr } from "./fx";
 import type { AccountStatus, AnyRow, CodeState, Entity, EntityRowMap, LoginLink, Sale } from "./entities";
 
 /** A business-rule violation. `code` is stable and safe to show/log (no secrets). */
@@ -254,6 +255,12 @@ export async function checkInvariants<E extends Entity>(
           "rate_required",
           `Sale is in ${s.currency} but the purchase was in ${acct.purchase_currency}: record the exchange rate`,
         );
+      // When a USD/PKR snapshot is stored, the cross-currency profit rate must be the same rate.
+      if (s.fx_usd_pkr_micro && s.currency !== acct.purchase_currency && s.exchange_rate_micro) {
+        const expected = saleRateFromUsdPkr(acct.purchase_currency, s.currency, s.fx_usd_pkr_micro)!;
+        if (Math.abs(expected - s.exchange_rate_micro) > Math.max(1, expected / 10_000))
+          throw new RuleError("rate_mismatch", "The sale's exchange rate does not match its recorded USD/PKR rate");
+      }
       if (isActiveSale(s)) {
         const dup = (await r.list("sales", { account_id: s.account_id })).find((x) => x.id !== s.id && isActiveSale(x));
         if (dup) throw new RuleError("duplicate_sale", "This account already has a completed sale");

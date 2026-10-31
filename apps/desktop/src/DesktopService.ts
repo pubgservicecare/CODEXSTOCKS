@@ -21,6 +21,8 @@ export function desktopService(core: AppCore, getUsername: () => string | null):
       return r as never;
     },
 
+    fx: () => core.fxQuote(),
+
     vaultUnlocked: () => core.vaultUnlocked,
     hasVault: async () => (await core.state()).hasVault,
     unlockVault: (p) => core.unlockVault(p),
@@ -47,6 +49,13 @@ export function desktopService(core: AppCore, getUsername: () => string | null):
       const bytes = await core.media.readLocal(item);
       if (!bytes) return null;
       return { url: URL.createObjectURL(new Blob([bytes as BlobPart], { type: item.mime })), status: item.status, error: item.last_error };
+    },
+
+    retryImage: async (accountId) => {
+      const item = await core.media.localFor(accountId);
+      if (item?.status !== "failed") return;
+      await core.media.retry(item.id);
+      core.kickSync(100);
     },
 
     syncStatus: () => core.syncStatus(),

@@ -12,6 +12,7 @@ function Login() {
   const [busy, setBusy] = useState(false);
   return (
     <AuthShell sub="Private admin" art="snow">
+        <div className="auth-eyebrow"><Icon name="lock" size={13} /> Private · owner only</div>
         <h1>Owner sign in</h1>
         <p className="lede">The private admin for codexstocks.org. Same inventory, books and vault as your desktop app.</p>
         <form
@@ -23,15 +24,16 @@ function Login() {
               await new ApiClient({ baseUrl: window.location.origin, credentials: "same-origin" }).login({ username: u, password: p, client: "web" });
               window.location.reload();
             } catch (e2) {
-              setErr(e2 instanceof Error ? e2.message : String(e2));
+              const status = (e2 as { status?: number })?.status;
+              setErr(status === 0 ? "Cannot reach the server. Check your internet connection and try again." : e2 instanceof Error ? e2.message : String(e2));
               setBusy(false);
             }
           }}
         >
-          <Field label="Username"><input value={u} onChange={(e) => setU(e.target.value)} autoComplete="username" required autoFocus /></Field>
-          <Field label="Password"><input type="password" value={p} onChange={(e) => setP(e.target.value)} autoComplete="current-password" required /></Field>
+          <Field label="Owner username"><input value={u} onChange={(e) => setU(e.target.value)} autoComplete="username" autoCapitalize="none" spellCheck={false} required autoFocus /></Field>
+          <Field label="Login password"><input type="password" value={p} onChange={(e) => setP(e.target.value)} autoComplete="current-password" required /></Field>
           {err && <Notice kind="bad">{err}</Notice>}
-          <button className="btn primary lg" disabled={busy} style={{ width: "100%" }}><Icon name="lock" size={16} /> {busy ? "Signing in…" : "Sign in"}</button>
+          <button className="btn primary lg" disabled={busy} style={{ width: "100%" }}><Icon name="lock" size={16} /> {busy ? "Signing in…" : "Sign In"}</button>
         </form>
         <p className="small faint" style={{ marginTop: 16 }}>
           Stored game-account passwords stay encrypted until you unlock the vault with your vault passphrase in this browser tab.

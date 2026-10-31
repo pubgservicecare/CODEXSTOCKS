@@ -5,6 +5,7 @@ import type {
   DeviceInfo,
   Entity,
   FinancialReport,
+  FxQuote,
   ImageKitAuth,
   OpResult,
   PublicListing,
@@ -86,6 +87,10 @@ export class ApiClient {
   /* auth */
   health() {
     return this.request<{ ok: boolean }>("GET", "/health");
+  }
+  /** Latest cached USD/PKR reference rate (public). */
+  fx() {
+    return this.request<{ quote: FxQuote | null }>("GET", "/fx");
   }
   authStatus() {
     return this.request<{ owner_exists: boolean; setup_enabled: boolean }>("GET", "/auth/status");

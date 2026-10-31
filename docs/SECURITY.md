@@ -21,6 +21,19 @@ never requests/intercepts OTPs, never resets third-party passwords and never gen
 
 Libraries: `@noble/ciphers`, `@noble/hashes` (audited, maintained). No custom algorithms.
 
+## Single owner (enforced by the server)
+
+- One owner row only: `owner.id = 1` CHECK constraint + `INSERT … ON CONFLICT DO NOTHING`.
+- `POST /auth/setup` refuses with **409 `owner_exists`** as soon as an owner exists, **before** the setup token is
+  even compared — a leaked `SETUP_TOKEN` cannot create or replace an owner. Wrong setup codes are throttled
+  (8 per 15 min per IP). `GET /auth/status` reports `setup_enabled: false` whenever an owner exists.
+- There is no registration route. Every private endpoint returns 401 without an owner session or device token.
+- Every app installation starts at **Owner sign in**. Signing in on a new PC is the device enrolment: the server
+  checks the owner password, issues a device token, and the inventory downloads; vault secrets stay encrypted until
+  the vault passphrase (or recovery key) is entered on that PC. A never-enrolled PC cannot sign in offline.
+  The only other entry is restoring an encrypted backup, which never contacts the server's owner setup.
+- Remove `SETUP_TOKEN` from Vercel once the owner exists (defence in depth; setup is closed either way).
+
 ## Vault passphrase vs login password
 
 They must differ (enforced). The server sees the login password during online login, so the vault key is

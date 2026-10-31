@@ -1,14 +1,64 @@
 import Link from "next/link";
-import { formatMoney, PRESERVE_WHITESPACE_STYLE, whatsappLink, type PublicListing } from "@codex/shared";
+import {
+  convertUsdPkr,
+  formatMoney,
+  formatUsdPkr,
+  otherCurrency,
+  PRESERVE_WHITESPACE_STYLE,
+  whatsappLink,
+  type Currency,
+  type FxQuote,
+  type PublicListing,
+} from "@codex/shared";
 import { fallbackArt } from "@codex/ui/art";
 import { Icon } from "@codex/ui/icons";
 
-export function Price({ l, big }: { l: Pick<PublicListing, "price_minor" | "currency">; big?: boolean }) {
+/** How prices are shown to this visitor: their display currency and the current reference rate (if any). */
+export interface PriceView {
+  display: Currency;
+  fx: FxQuote | null;
+}
+
+/**
+ * Listing price in the visitor's display currency first, with the other currency underneath.
+ * The owner's price (amount + currency) is the real price; a converted amount is always marked "≈"
+ * and the original stays visible. Without a rate only the original price is shown.
+ */
+export function Price({ l, big, view }: { l: Pick<PublicListing, "price_minor" | "currency">; big?: boolean; view?: PriceView }) {
   if (l.price_minor === null || !l.currency) return <span className={`price ${big ? "big" : ""}`}><small>Price on request</small></span>;
-  return (
-    <span className={`price ${big ? "big" : ""}`}>
+  const original = (
+    <>
       {formatMoney(l.price_minor, l.currency)} <small>{l.currency}</small>
+    </>
+  );
+  const fx = view?.fx ?? null;
+  if (!view || !fx) return <span className={`price ${big ? "big" : ""}`} data-testid="price">{original}</span>;
+  const other = otherCurrency(l.currency);
+  const converted = convertUsdPkr(l.price_minor, l.currency, other, fx.usd_pkr_micro);
+  const approx = (
+    <>
+      ≈ {formatMoney(converted, other)} <small>{other}</small>
+    </>
+  );
+  const listedFirst = view.display === l.currency;
+  return (
+    <span className={`price-stack ${big ? "big" : ""}`} data-testid="price">
+      <span className={`price ${big ? "big" : ""}`}>{listedFirst ? original : approx}</span>
+      <span className="price-alt">{listedFirst ? <>{approx}</> : <>Listed at {formatMoney(l.price_minor, l.currency)} {l.currency}</>}</span>
     </span>
+  );
+}
+
+/** "Approximate conversion at 1 USD = 276.6 PKR · daily reference rate · updated …" + required attribution. */
+export function RateNote({ fx }: { fx: FxQuote | null }) {
+  if (!fx) return <p className="rate-note">Prices are shown in the currency the owner listed them in.</p>;
+  const t = new Date(fx.effective_at ?? fx.retrieved_at).toUTCString().replace(" GMT", " UTC");
+  return (
+    <p className="rate-note">
+      Converted prices are approximate, at {formatUsdPkr(fx.usd_pkr_micro)} ({fx.frequency} reference rate, updated {t}
+      {fx.status === "stale" ? ", may be out of date" : ""}). You pay the listed price; confirm the amount on WhatsApp.{" "}
+      <a href="https://www.exchangerate-api.com" target="_blank" rel="noopener noreferrer">Rates By Exchange Rate API</a>
+    </p>
   );
 }
 
@@ -61,7 +111,7 @@ export function ListingMedia({ l, w, h, eager, labelLong, index }: { l: PublicLi
   );
 }
 
-export function ListingCard({ l, index }: { l: PublicListing; index?: number }) {
+export function ListingCard({ l, index, view }: { l: PublicListing; index?: number; view?: PriceView }) {
   const first = l.description.split(/\r?\n/).find((x) => x.trim() !== "") ?? "";
   return (
     <Link href={`/accounts/${l.id}`} className="card">
@@ -73,7 +123,7 @@ export function ListingCard({ l, index }: { l: PublicListing; index?: number }) 
         <h3>{l.title}</h3>
         {first && <div className="snippet">{first.trim()}</div>}
         <div className="foot">
-          <Price l={l} />
+          <Price l={l} view={view} />
           <span className="more">
             View <Icon name="chevronRight" size={16} />
           </span>
