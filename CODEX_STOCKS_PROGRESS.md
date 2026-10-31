@@ -2,15 +2,28 @@
 
 Legend: ✅ VERIFIED · 🟡 IMPLEMENTED, NOT VERIFIED · ⛔ BLOCKED
 
-Last update: 2026-10-30 (dev PC: Windows 10 Pro 22H2 build 19045)
+Last update: 2026-10-31 (dev PC: Windows 10 Pro 22H2 build 19045)
 
-## Dual currency + USD/PKR rates + combined charts — see docs/FX.md (2026-10-31, not committed/deployed)
+## Release 1.0.4 — deployed to production — see docs/RELEASE_1.0.4.md (2026-10-31)
+- ✅ Migrations `0001_init`, `0002_fx_snapshots` applied in production (0002 run by the owner), none pending; production
+  site proven to use that database (its first rate fetch appeared in `fx_rates`).
+- ✅ Commit `737b912` pushed to `master` (public repo `pubgservicecare/CODEXSTOCKS`; no secrets in it or its history).
+  Vercel deployment `4j5ti8tMAK8Kb2iBC24fHdGR31dA` completed 16:47 UTC.
+- ✅ Live: health ok; USD/PKR 276.777696 daily reference rate (ExchangeRate-API, attribution shown); setup closed
+  (`setup_enabled:false`, setup → 409); private API 401; TLS valid on all three domains; www → apex; no secrets in
+  served code; storefront PKR default from Pakistan + switcher; no overflow at phone widths.
+- ✅ Desktop installer **1.0.4** `release\CODE-X-STOCKS-1.0.4-Setup-x64.exe` (SHA-256 8B5DBBE2…67FD); 1.0.1–1.0.3 kept.
+- ✅ Tests 157 passed (156 on the release commit + new desktop upgrade test). Typecheck clean. Web + desktop builds OK.
+- ⛔ Real ImageKit upload test (needs owner sign-in or ImageKit keys — neither available here). ⛔ `SETUP_TOKEN`/Preview
+  env check in Vercel (the CLI here is signed in to another Vercel account).
+- 🟡 Signed-in admin pages in production, foreign visitor → USD, physical phones, 1.0.3 → 1.0.4 upgrade on a real PC.
+
+## Dual currency + USD/PKR rates + combined charts — see docs/FX.md (deployed in 1.0.4)
 - ✅ Provider ExchangeRate-API open access (daily, commercial use with attribution); real connection verified through `/api/v1/fx`.
 - ✅ Server cache (6 h refresh, 30 min retry pause, stale fallback, validation). Storefront PKR/USD by country + switcher.
 - ✅ Transaction-time snapshots on purchases/sales/expenses (manual sale rate needs a reason); combined PKR books; PKR/USD charts from one series.
-- ⚠ Needs production migration **0002_fx_snapshots** (additive) BEFORE deploying this code — owner approval required; not run.
+- ✅ Production migration **0002_fx_snapshots** (additive) applied by the owner before the deploy.
 - ✅ Tests 156 passed (45 new). Typecheck clean. Web production build OK. Browser QA on a local production build (demo data).
-- ⚠ Desktop installer not rebuilt after this change (1.0.3 installer predates it).
 
 ## Final feature update (desktop 1.0.3 + website) — see docs/RELEASE_1.0.3.md
 - ✅ Single-owner login: every fresh install shows **Owner sign in** (+ Restore encrypted backup only). Server closes setup

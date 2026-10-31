@@ -69,3 +69,5 @@ New rows (legend as above; 📱 = checked in a phone-sized browser via device em
 | 24 | Combined books + PKR/USD charts from one series | Same shared functions | Same | ✅ identical-movement tests; ✅ both PCs identical books; 👁 identical bar heights in the browser |
 
 `fx` is part of the shared `DataService` contract on both (desktop: cached locally).
+Shipped in website deployment `737b912` (2026-10-31) and desktop **1.0.4**; desktop 1.0.3 keeps working against the
+new server (it simply has no rate previews), and cannot erase the snapshot fields when it syncs.

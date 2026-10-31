@@ -59,6 +59,8 @@ ImageKit smoke tests, and rollback. Current status: [CODEX_STOCKS_PROGRESS.md](C
 - [Design system, artwork & before/after screenshots](docs/DESIGN.md)
 - [Security model & limitations](docs/SECURITY.md)
 - [Accounting & profit formula](docs/ACCOUNTING.md)
+- [USD/PKR exchange rates & dual currency](docs/FX.md)
+- [Release 1.0.4 record (current)](docs/RELEASE_1.0.4.md) · [Release 1.0.3](docs/RELEASE_1.0.3.md)
 - [Database migrations](docs/DATABASE_MIGRATIONS.md)
 - [Testing](docs/TESTING.md)
 - [Release checklist (desktop)](docs/RELEASE.md)

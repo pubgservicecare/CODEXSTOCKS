@@ -6,7 +6,7 @@
 |---|---|
 | Provider | **ExchangeRate-API**, Open Access endpoint `https://open.er-api.com/v6/latest/USD` (no key). Optional `FX_API_KEY` switches to the same provider's keyed endpoint (same response format). |
 | Why | Supports PKR; free; the documentation explicitly permits personal **and commercial** currency conversion and caching; no key to protect; simple JSON with publication timestamps. Requires attribution ("Rates By Exchange Rate API" link — shown next to converted prices and in the footer). Redistribution of the raw feed is not allowed (we only show conversions). |
-| Verified | 2026-10-30: live request returned `USD/PKR = 276.603556`, `time_last_update_utc` 30 Oct 2026 00:02:31, next update 31 Oct 2026 00:27:41. Also verified end-to-end through `GET /api/v1/fx` of a local build. |
+| Verified | 2026-10-30: live request returned `USD/PKR = 276.603556`, `time_last_update_utc` 30 Oct 2026 00:02:31, next update 31 Oct 2026 00:27:41. Also verified end-to-end through `GET /api/v1/fx` of a local build. **Production 2026-10-31:** `https://codexstocks.org/api/v1/fx` returned `276.777696`, source ExchangeRate-API, published 31 Oct 2026 00:02:31 UTC, retrieved 16:47:05 UTC, frequency `daily`, status `fresh`; the same row was found in the production `fx_rates` table. |
 | Frequency | **Daily** reference rate (published once per day). It is labelled "daily reference rate" everywhere — never "live" or "real-time". |
 | Alternatives considered | Paid/keyed APIs with hourly or minute updates (Open Exchange Rates, FXFeed, AllRatesToday) — not needed for listing prices and their commercial terms were not confirmed; ECB/Frankfurter does not publish PKR; the State Bank of Pakistan publishes daily rates but no API. |
 
@@ -83,12 +83,14 @@ new fields cannot erase them (the server keeps stored values for fields a client
 Adds nullable columns to `accounts`, `sales`, `expenses` and the table `fx_rates`. Nothing is dropped, rewritten or
 deleted; existing rows get NULL (no snapshot). Desktop SQLite adds the same columns automatically on start.
 
-**Production order (owner action, not done):**
+**Production order (done 2026-10-31, see [RELEASE_1.0.4.md](RELEASE_1.0.4.md)):**
 1. Back up (desktop encrypted backup; optionally a Neon branch).
 2. `npm run db:status` then `npm run db:migrate` against production (with `DATABASE_URL` from `.env.local`).
    This must happen **before** the new code is deployed — the new code reads the new columns.
+   *The owner ran the migration; `db:status` then showed `0001_init, 0002_fx_snapshots` applied, none pending.*
 3. Deploy. Optional env vars: `STORE_DEFAULT_DISPLAY_CURRENCY`, `FX_REFRESH_MINUTES`, `FX_RETRY_MINUTES`, `FX_API_KEY`, `FX_DISABLED`.
-4. Check `https://codexstocks.org/api/v1/fx` returns a quote.
+   *Deployed from commit `737b912` (no new env vars).*
+4. Check `https://codexstocks.org/api/v1/fx` returns a quote. *Verified.*
 
 ## Known limitations
 

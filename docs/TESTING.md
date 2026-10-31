@@ -26,6 +26,7 @@ simulated network (online/offline switch, lost responses) and a mocked ImageKit.
 | `packages/shared/test/fx.test.ts` | USD↔PKR conversion and rounding, invalid rates (NaN/∞/0/negative/absurd), no conversion without a rate, staleness, sale-rate ↔ USD/PKR consistency, country → display currency and manual choice, snapshot validation (source/time required, manual needs reason), combined books with mixed PKR/USD purchases, sales, cross-currency sale, expenses, restocking refund and voided sale, exclusion of USD records without a rate, **PKR and USD charts with identical movement** (constant factor, unaffected by a new display rate, history unchanged) |
 | `packages/server/test/fx.test.ts` | rate service: single fetch then cache, refresh after the provider's next update, stale fallback on failure + retry pause, no rate ever → null, invalid provider data rejected, public `/fx`; migration 0002 additive; sale snapshot stored, manual rate needs a reason, mismatched rate refused; an older client cannot erase snapshots during sync; storefront sorting by PKR equivalent (and every query shape with a rate) |
 | `packages/local-core/test/fx.test.ts` | desktop quote cached and served offline, none invented on a never-connected PC; offline USD sale and expense keep their recorded rate through sync while the reference rate changes; identical combined books on both PCs; audit records the rate; refund uses its sale's rate |
+| `packages/local-core/test/upgrade.test.ts` | desktop upgrade: a local database written without the exchange-rate columns (1.0.3 and earlier) gets them added empty on start; accounts, sales and vault secrets unchanged; new snapshots stored and synced afterwards |
 | `packages/ui/test/fx.test.tsx` | storefront price display for Pakistan / international visitors and both listing currencies, no-rate fallback, rate note (daily, time, stale, attribution, never "live"); Add/Edit form preview; inventory equivalents; Mark as Sold rate resolver (reference, manual + reason, old cache confirmation, no quote); purchase and expense snapshot rules |
 | `apps/web/test/web.test.tsx` | domain routing (admin never reachable on public host), TXT rendering (pre-wrap + HTML escaping) for storefront and admin |
 
@@ -46,3 +47,9 @@ These use **browser device emulation** (Chromium, headless). They are not a subs
 
 See CODEX_STOCKS_PROGRESS.md for what was verified on a real machine (installer, app launch, data
 preservation, browser QA of the website) and what remains blocked on credentials.
+
+Release 1.0.4 (2026-10-31): `npm test` 15 files / **156 passed** on the release commit, 16 files / **157 passed**
+with the upgrade test added afterwards; typecheck clean; web and desktop production
+builds OK; read-only live checks of the production deployment (TLS, routing, health, FX, setup closed, private
+endpoints 401, no secrets in served bundles, storefront switcher at phone widths) — details in
+[RELEASE_1.0.4.md](RELEASE_1.0.4.md).

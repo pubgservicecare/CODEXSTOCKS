@@ -46,7 +46,9 @@ rate. The review step shows listing price, purchase cost, actual amount and the 
 account: `actual amount − purchase cost` (cost converted at the entered rate when currencies differ — the same
 `costInSaleCurrency` used by the reports). Business expenses and later refunds are not part of that per-account
 figure; they are applied in the per-currency report above. One atomic command saves the sale, marks the account
-`sold`, unpublishes it (it leaves the website and its old public URL returns 404) and writes `sale.recorded` to the
+`sold`, unpublishes it (it leaves the website: the public API returns 404 for it and its old page shows
+"Account not found" with `noindex` — that page answers HTTP 200 because the storefront streams a loading
+state first) and writes `sale.recorded` to the
 audit history. Each dialog uses one sale id, so a double tap or a retried request after a lost response is
 answered "Sale already recorded" instead of creating a second sale; a second sale of the same account from
 another device is rejected as a conflict.

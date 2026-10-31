@@ -33,6 +33,16 @@ Libraries: `@noble/ciphers`, `@noble/hashes` (audited, maintained). No custom al
   the vault passphrase (or recovery key) is entered on that PC. A never-enrolled PC cannot sign in offline.
   The only other entry is restoring an encrypted backup, which never contacts the server's owner setup.
 - Remove `SETUP_TOKEN` from Vercel once the owner exists (defence in depth; setup is closed either way).
+  Production check 2026-10-31 (deployment of `737b912`): `/auth/status` → `owner_exists:true, setup_enabled:false`;
+  a setup request → 409 `owner_exists`. Whether `SETUP_TOKEN` is still stored in Vercel could not be checked (the
+  local Vercel CLI is signed in to a different account than the one hosting codexstocks.org).
+
+## Source repository
+
+`github.com/pubgservicecare/CODEXSTOCKS` is **public**. Nothing secret is in it: `.env*`, databases, backups, keys
+and installers are git-ignored, and the full history was scanned for the real database password/host and for
+credential patterns (2026-10-31: none found). Security does not depend on the code being private, but the code,
+docs and demo screenshots are visible to anyone; make the repository private on GitHub if that is not wanted.
 
 ## Vault passphrase vs login password
 
