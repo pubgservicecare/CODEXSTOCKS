@@ -43,6 +43,12 @@ in `apps/web`; the empty `DATABASE_URL` guarantees the in-memory demo data even 
 
 These use **browser device emulation** (Chromium, headless). They are not a substitute for a physical phone.
 
+Website redesign (2026-11): `redesign-storefront-audit.mjs` (storefront overflow at 10 widths, story states,
+filter sheet, menu), `redesign-admin-audit.mjs` (10 admin pages × 10 widths), `redesign-motion-performance.mjs`
+(reduced motion + scroll frame times / long tasks / layout shift with a 4× slower CPU), `redesign-screenshots.mjs`
+(the screenshot set in `docs/screenshots/redesign/after/`). Run them against a demo-mode server
+(`QA_BASE=http://localhost:3200`, output in `QA_OUT`).
+
 ## Manual / real-environment checks performed
 
 See CODEX_STOCKS_PROGRESS.md for what was verified on a real machine (installer, app launch, data

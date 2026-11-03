@@ -20,21 +20,27 @@ const usdListing = { price_minor: 10_000, currency: "USD" } as Pick<PublicListin
 const text = (html: string) => html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
 
 describe("storefront prices", () => {
-  it("Pakistan visitor: PKR first, USD equivalent underneath", () => {
-    const t = text(renderToStaticMarkup(<Price l={pkrListing} view={{ display: "PKR", fx: quote }} />));
-    expect(t).toBe("Rs 100,000.00 PKR ≈ $357.14 USD");
+  it("Pakistan visitor: PKR first, the USD equivalent on a small line directly underneath", () => {
+    const html = renderToStaticMarkup(<Price l={pkrListing} view={{ display: "PKR", fx: quote }} />);
+    expect(text(html)).toBe("PKR 100,000 ≈ USD 357.14");
+    expect(html).toMatch(/class="price-main">PKR 100,000<\/span><span class="price-alt">≈ USD 357.14</);
   });
   it("international visitor: USD equivalent first, the listed PKR price still visible", () => {
     const t = text(renderToStaticMarkup(<Price l={pkrListing} view={{ display: "USD", fx: quote }} />));
-    expect(t).toBe("≈ $357.14 USD Listed at Rs 100,000.00 PKR");
+    expect(t).toBe("≈ USD 357.14 Listed price PKR 100,000");
   });
   it("a USD listing for a Pakistan visitor shows the PKR equivalent first and the USD price as listed", () => {
-    expect(text(renderToStaticMarkup(<Price l={usdListing} view={{ display: "PKR", fx: quote }} />))).toBe("≈ Rs 28,000.00 PKR Listed at $100.00 USD");
-    expect(text(renderToStaticMarkup(<Price l={usdListing} view={{ display: "USD", fx: quote }} />))).toBe("$100.00 USD ≈ Rs 28,000.00 PKR");
+    expect(text(renderToStaticMarkup(<Price l={usdListing} view={{ display: "PKR", fx: quote }} />))).toBe("≈ PKR 28,000 Listed price USD 100.00");
+    expect(text(renderToStaticMarkup(<Price l={usdListing} view={{ display: "USD", fx: quote }} />))).toBe("USD 100.00 ≈ PKR 28,000");
+  });
+  it("cards stay uncluttered: the listed price alone, unless the main line is a conversion", () => {
+    expect(text(renderToStaticMarkup(<Price l={pkrListing} view={{ display: "PKR", fx: quote }} size="card" />))).toBe("PKR 100,000");
+    expect(text(renderToStaticMarkup(<Price l={pkrListing} view={{ display: "USD", fx: quote }} size="card" />))).toBe("≈ USD 357.14 Listed price PKR 100,000");
   });
   it("without a rate only the listed price is shown — nothing converted or invented", () => {
     const t = text(renderToStaticMarkup(<Price l={pkrListing} view={{ display: "USD", fx: null }} />));
-    expect(t).toBe("Rs 100,000.00 PKR");
+    expect(t).toBe("PKR 100,000");
+    expect(text(renderToStaticMarkup(<Price l={{ price_minor: 10_000_050, currency: "PKR" }} view={{ display: "PKR", fx: null }} />))).toBe("PKR 100,000.50");
     expect(text(renderToStaticMarkup(<RateNote fx={null} />))).toMatch(/currency the owner listed/);
   });
   it("labels the rate as a daily reference, shows its time, flags staleness and credits the provider", () => {

@@ -31,9 +31,10 @@ npm install
 npm test                      # all automated tests (no external services needed)
 npm run typecheck
 
-# Website with an in-memory demo database (DEMO data, never production):
-cd apps/web; $env:DEMO_MODE="1"; $env:COOKIE_SECURE="false"; $env:ADMIN_ORIGINS="http://localhost:3000"; npx next dev
+# Website on localhost with an in-memory DEMO database (sample data, never production):
+npm run web:demo
 #   storefront: http://localhost:3000     admin: http://localhost:3000/admin  (demo / Demo-Owner-Pass1!)
+#   Do NOT use `npm run web:dev` for previews: apps/web/.env.local holds the production database address.
 
 # Desktop app in development:
 npm run desktop:dev

@@ -34,3 +34,6 @@ Thumbs.db
 
 # release artifacts
 release/
+
+# raw third-party PUBG pictures (from Pinterest); the web copies in apps/web/assets/pubg/ are what the site ships
+brand-reference/pubg-visual-references/

@@ -21,7 +21,7 @@ import { Icon, type IconName } from "../icons";
 import { ART, fallbackArt } from "../art";
 import type { AccountListItem } from "../service";
 
-function Row({ label, r, k, hint, strong }: { label: string; r: Record<Currency, CurrencyReport>; k: keyof CurrencyReport; hint?: string; strong?: boolean }) {
+export function Row({ label, r, k, hint, strong }: { label: string; r: Record<Currency, CurrencyReport>; k: keyof CurrencyReport; hint?: string; strong?: boolean }) {
   return (
     <tr>
       <td style={strong ? { fontWeight: 620 } : undefined}>
@@ -41,7 +41,7 @@ function Row({ label, r, k, hint, strong }: { label: string; r: Record<Currency,
 }
 
 /** One currency's books. USD and PKR are never added together. */
-function MoneyCard({ c, r }: { c: Currency; r: CurrencyReport }) {
+export function MoneyCard({ c, r }: { c: Currency; r: CurrencyReport }) {
   const max = Math.max(r.incoming, r.outgoing, 1);
   const pct = (v: number) => `${Math.max(0, Math.min(100, (v / max) * 100))}%`;
   return (
@@ -72,7 +72,7 @@ function MoneyCard({ c, r }: { c: Currency; r: CurrencyReport }) {
   );
 }
 
-interface Flow {
+export interface Flow {
   sales: Sale[];
   refunds: Refund[];
   expenses: Expense[];
@@ -116,7 +116,7 @@ function FlowChart({ title, sub, currency, rows, heights }: { title: string; sub
  * recorded on it (one shared series); the PKR and USD charts are both drawn from that series, the USD one
  * scaled by ONE display rate for the whole period — so they always rise and fall together.
  */
-function MonthlyChart({ flow }: { flow: Flow }) {
+export function MonthlyChart({ flow }: { flow: Flow }) {
   const { quote } = useFx();
   const months = useMemo(() => lastMonths(6), []);
   const { buckets, excluded } = useMemo(() => consolidatedMonthlyFlow(flow, months.map((m) => m.key)), [flow, months]);
@@ -164,7 +164,7 @@ function MonthlyChart({ flow }: { flow: Flow }) {
 }
 
 /** Combined books in PKR (each transaction at its recorded rate), with a USD equivalent at the display rate. */
-function ConsolidatedCard({ flow }: { flow: Flow }) {
+export function ConsolidatedCard({ flow }: { flow: Flow }) {
   const { quote } = useFx();
   const r = useMemo(() => computeConsolidated(flow), [flow]);
   const usd = (v: number) => (quote ? formatMoney(convertUsdPkr(v, "PKR", "USD", quote.usd_pkr_micro), "USD") : "—");
@@ -206,7 +206,7 @@ export function actionIcon(a: string): IconName {
   return ACTION_ICON.find(([p]) => a.startsWith(p))?.[1] ?? "history";
 }
 
-function Activity({ events, titles }: { events: AuditEvent[]; titles: Map<string, string> }) {
+export function Activity({ events, titles }: { events: AuditEvent[]; titles: Map<string, string> }) {
   const acc = (e: AuditEvent) => {
     if (e.entity_type === "accounts") return e.entity_id;
     try {
@@ -246,9 +246,10 @@ function Activity({ events, titles }: { events: AuditEvent[]; titles: Map<string
   );
 }
 
-export function Dashboard() {
+/** Everything the dashboard shows (shared by the desktop dashboard and the admin website's dashboard). */
+export function useDashboardData() {
   const { svc } = useApp();
-  const { data, error, loading } = useLoad(async () => {
+  return useLoad(async () => {
     const [dash, accounts, events, sales, refunds, expenses] = await Promise.all([
       svc.dashboard(),
       svc.listAccounts(),
@@ -259,6 +260,11 @@ export function Dashboard() {
     ]);
     return { ...dash, accounts, events, flow: { sales, refunds, expenses, accounts } as Flow };
   }, []);
+}
+
+export function Dashboard() {
+  const { svc } = useApp();
+  const { data, error, loading } = useDashboardData();
   if (!data) return <Loading error={error} loading={loading} rows={5} />;
   const { counts, byCurrency } = data.report;
   const s = data.sync;
@@ -400,7 +406,7 @@ export function Dashboard() {
   );
 }
 
-function SyncCard({ s }: { s: Awaited<ReturnType<ReturnType<typeof useApp>["svc"]["dashboard"]>>["sync"] }) {
+export function SyncCard({ s }: { s: Awaited<ReturnType<ReturnType<typeof useApp>["svc"]["dashboard"]>>["sync"] }) {
   if (!s) return <div className="card"><div className="empty small">Sync status unavailable.</div></div>;
   const tiles: [string, string | number, IconName, string?][] = s.cloud
     ? [

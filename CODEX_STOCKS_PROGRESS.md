@@ -2,7 +2,16 @@
 
 Legend: ✅ VERIFIED · 🟡 IMPLEMENTED, NOT VERIFIED · ⛔ BLOCKED
 
-Last update: 2026-10-31 (dev PC: Windows 10 Pro 22H2 build 19045)
+Last update: 2026-11-03 (dev PC: Windows 10 Pro 22H2 build 19045)
+
+## Website redesign (storefront + admin website) — see docs/REDESIGN_2026-11.md (2026-11-03, not committed/deployed)
+- ✅ New cinematic brand system with the owner's real logo (cut out; PUBG/Tencent marks excluded), Anton + Chakra Petch (OFL, self-hosted).
+- ✅ Imagery: the owner's PUBG reference pictures (owner's request, 2026-11-03) — hero, story, "Iconic looks" gallery, inventory and WhatsApp backdrops, card artwork, admin sign-in/dashboard; prepared by `scripts/art/prepare-website-art.mjs` into `apps/web/assets/pubg/` (raw originals stay git-ignored). ⚠ Third-party artwork, rights not established — owner's decision.
+- ⛔ Pinterest video not used: unlicensed, watermarked fan edit of game footage (inspected: MP4 720×1280, 30 fps, 14.9 s). `HERO_VIDEO` slot ready for a licensed clip.
+- ✅ Storefront: brand opening, two right-to-left tickers, parallax hero, pinned scroll story, `/accounts` inventory with phone filter sheet, new account page (main price + small "≈" line), page transitions.
+- ✅ Admin website: new shell, dashboard, sign-in; website-only theme for every page. Desktop app unchanged (same CSS hash as 1.0.4).
+- ✅ Tests 158 passed; typecheck clean; web + desktop builds OK; overflow audits clean at 10 widths; reduced motion verified; CLS 0.0002.
+- 🟡 Browser emulation only (no physical phone). Nothing deployed.
 
 ## Release 1.0.4 — deployed to production — see docs/RELEASE_1.0.4.md (2026-10-31)
 - ✅ Migrations `0001_init`, `0002_fx_snapshots` applied in production (0002 run by the owner), none pending; production

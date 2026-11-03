@@ -3,4 +3,5 @@ export * from "./components";
 export * from "./icons";
 export * from "./art";
 export * from "./fx-ui";
-export { AdminApp, AuthShell, Brand } from "./AdminApp";
+export { AdminApp, AuthShell, Brand, NAV, SyncBadge, TABS, useTableLabels, type AdminPresentation } from "./AdminApp";
+export { Activity, ConsolidatedCard, MoneyCard, MonthlyChart, Row, SyncCard, useDashboardData, type Flow } from "./pages/Dashboard";

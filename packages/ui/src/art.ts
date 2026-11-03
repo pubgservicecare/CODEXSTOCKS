@@ -43,14 +43,23 @@ export const ART_ALT = {
 };
 
 const CARDS = [cardDusk, cardDawn, cardDesert, cardSnow, cardStorm].map(assetUrl);
+let cards = CARDS;
+
+/**
+ * Lets a host swap the decorative card artwork (the admin website uses its own set). The desktop app never
+ * calls this, so it keeps the artwork above.
+ */
+export function setCardArt(set: string[]): void {
+  if (set.length) cards = set;
+}
 
 /**
  * Decorative artwork for an item that has no photo of its own. In a list, pass the position so
  * neighbours never repeat; on its own, the id picks a stable scene.
  */
 export function fallbackArt(id: string, index?: number): string {
-  if (index !== undefined) return CARDS[index % CARDS.length];
+  if (index !== undefined) return cards[index % cards.length];
   let h = 2166136261;
   for (let i = 0; i < id.length; i++) h = Math.imul(h ^ id.charCodeAt(i), 16777619) >>> 0;
-  return CARDS[h % CARDS.length];
+  return cards[h % cards.length];
 }

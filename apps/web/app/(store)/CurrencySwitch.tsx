@@ -5,7 +5,7 @@ import { useTransition } from "react";
 
 const COOKIE = "cx_ccy";
 
-/** PKR | USD: which currency prices are shown in first. The choice is remembered for a year (cookie). */
+/** A small PKR | USD toggle: which currency prices are shown in first. Remembered for a year (cookie). */
 export function CurrencySwitch({ current }: { current: "PKR" | "USD" }) {
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -21,7 +21,8 @@ export function CurrencySwitch({ current }: { current: "PKR" | "USD" }) {
     start(() => router.refresh());
   };
   return (
-    <div className={`ccy-switch ${pending ? "busy" : ""}`} role="group" aria-label="Show prices in">
+    <div className={`ccy${pending ? " is-busy" : ""}`} role="group" aria-label="Show prices in" data-on={current}>
+      <span className="ccy-thumb" aria-hidden="true" />
       {(["PKR", "USD"] as const).map((c) => (
         <button key={c} type="button" aria-pressed={c === current} className={c === current ? "on" : ""} onClick={() => pick(c)}>
           {c}

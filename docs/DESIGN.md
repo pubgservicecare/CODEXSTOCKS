@@ -1,5 +1,9 @@
 # CODE X STOCKS — design system & redesign record
 
+> **November 2026:** the two websites (storefront and admin website) were redesigned again — cinematic brand
+> system with the owner's real logo and PUBG pictures, motion and new layouts. See [REDESIGN_2026-11.md](REDESIGN_2026-11.md).
+> The desktop app keeps the design described below.
+
 One visual system across the **Windows desktop app**, **admin.codexstocks.org** and **codexstocks.org**.
 The desktop app and admin website render the *same* React screens from `packages/ui`; the storefront
 (`apps/web/app/(store)`) shares the tokens, font, icons and artwork.

@@ -20,6 +20,7 @@
     "desktop:dev": "npm run tauri:dev -w @codex/desktop",
     "desktop:build": "npm run tauri:build -w @codex/desktop",
     "web:dev": "npm run dev -w @codex/web",
+    "web:demo": "node scripts/web-demo.mjs",
     "web:build": "npm run build -w @codex/web",
     "db:migrate": "npm run db:migrate -w @codex/server",
     "db:status": "npm run db:status -w @codex/server"

@@ -1,8 +1,6 @@
 import Link from "next/link";
 import {
   convertUsdPkr,
-  formatMoney,
-  formatUsdPkr,
   otherCurrency,
   PRESERVE_WHITESPACE_STYLE,
   whatsappLink,
@@ -10,8 +8,10 @@ import {
   type FxQuote,
   type PublicListing,
 } from "@codex/shared";
-import { fallbackArt } from "@codex/ui/art";
-import { Icon } from "@codex/ui/icons";
+import { cardArt } from "./art";
+import { Glyph } from "./glyph";
+
+export { Glyph };
 
 /** How prices are shown to this visitor: their display currency and the current reference rate (if any). */
 export interface PriceView {
@@ -19,44 +19,62 @@ export interface PriceView {
   fx: FxQuote | null;
 }
 
+const group = (n: number) => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+
+/** "PKR 100,000" (whole rupees when there are no paisa) or "USD 357.14". `round` rounds PKR to whole rupees. */
+export function money(minor: number, currency: Currency, { round = false } = {}): string {
+  const sign = minor < 0 ? "-" : "";
+  let abs = Math.abs(minor);
+  if (round && currency === "PKR") abs = Math.round(abs / 100) * 100;
+  const major = Math.floor(abs / 100);
+  const cents = abs % 100;
+  const withCents = currency === "USD" || cents !== 0;
+  return `${currency} ${sign}${group(major)}${withCents ? "." + String(cents).padStart(2, "0") : ""}`;
+}
+
 /**
- * Listing price in the visitor's display currency first, with the other currency underneath.
- * The owner's price (amount + currency) is the real price; a converted amount is always marked "≈"
- * and the original stays visible. Without a rate only the original price is shown.
+ * The listing price in the visitor's display currency, with the other currency on a small line underneath.
+ * The owner's amount + currency is the real price; a converted amount is always marked "≈" and the listed
+ * price stays visible. Without a rate only the listed price is shown. Cards drop the secondary line when the
+ * main line already is the listed price, so they stay uncluttered.
  */
-export function Price({ l, big, view }: { l: Pick<PublicListing, "price_minor" | "currency">; big?: boolean; view?: PriceView }) {
-  if (l.price_minor === null || !l.currency) return <span className={`price ${big ? "big" : ""}`}><small>Price on request</small></span>;
-  const original = (
-    <>
-      {formatMoney(l.price_minor, l.currency)} <small>{l.currency}</small>
-    </>
-  );
+export function Price({ l, view, size = "detail" }: { l: Pick<PublicListing, "price_minor" | "currency">; view?: PriceView; size?: "card" | "detail" | "bar" }) {
+  const cls = `price price--${size}`;
+  if (l.price_minor === null || !l.currency)
+    return (
+      <span className={cls} data-testid="price">
+        <span className="price-main is-request">Price on request</span>
+      </span>
+    );
+  const listed = money(l.price_minor, l.currency);
   const fx = view?.fx ?? null;
-  if (!view || !fx) return <span className={`price ${big ? "big" : ""}`} data-testid="price">{original}</span>;
+  if (!view || !fx)
+    return (
+      <span className={cls} data-testid="price">
+        <span className="price-main">{listed}</span>
+      </span>
+    );
   const other = otherCurrency(l.currency);
-  const converted = convertUsdPkr(l.price_minor, l.currency, other, fx.usd_pkr_micro);
-  const approx = (
-    <>
-      ≈ {formatMoney(converted, other)} <small>{other}</small>
-    </>
-  );
+  const approx = `≈ ${money(convertUsdPkr(l.price_minor, l.currency, other, fx.usd_pkr_micro), other, { round: true })}`;
   const listedFirst = view.display === l.currency;
   return (
-    <span className={`price-stack ${big ? "big" : ""}`} data-testid="price">
-      <span className={`price ${big ? "big" : ""}`}>{listedFirst ? original : approx}</span>
-      <span className="price-alt">{listedFirst ? <>{approx}</> : <>Listed at {formatMoney(l.price_minor, l.currency)} {l.currency}</>}</span>
+    <span className={cls} data-testid="price">
+      <span className="price-main">{listedFirst ? listed : approx}</span>
+      {listedFirst ? size !== "card" && <span className="price-alt">{approx}</span> : <span className="price-alt">Listed price {listed}</span>}
     </span>
   );
 }
 
-/** "Approximate conversion at 1 USD = 276.6 PKR · daily reference rate · updated …" + required attribution. */
+/** "≈ values are approximate, at 1 USD = 276.6 PKR (daily reference rate, updated …)" + the provider credit. */
 export function RateNote({ fx }: { fx: FxQuote | null }) {
   if (!fx) return <p className="rate-note">Prices are shown in the currency the owner listed them in.</p>;
   const t = new Date(fx.effective_at ?? fx.retrieved_at).toUTCString().replace(" GMT", " UTC");
+  const stale = fx.status === "stale";
+  const rate = (fx.usd_pkr_micro / 1_000_000).toFixed(2).replace(/\.?0+$/, "");
   return (
-    <p className="rate-note">
-      Converted prices are approximate, at {formatUsdPkr(fx.usd_pkr_micro)} ({fx.frequency} reference rate, updated {t}
-      {fx.status === "stale" ? ", may be out of date" : ""}). You pay the listed price; confirm the amount on WhatsApp.{" "}
+    <p className={`rate-note${stale ? " is-stale" : ""}`}>
+      ≈ values are approximate, at 1 USD = {rate} PKR ({fx.frequency} reference rate, updated {t}
+      {stale ? ", may be out of date" : ""}). You pay the listed price — confirm it on WhatsApp.{" "}
       <a href="https://www.exchangerate-api.com" target="_blank" rel="noopener noreferrer">Rates By Exchange Rate API</a>
     </p>
   );
@@ -90,45 +108,72 @@ export function WhatsAppButton({ phone, listing, url, big, label = "Enquire on W
   const href = whatsappLink(phone, `Hi CODE X STOCKS, I'm interested in "${listing.title}" (ref ${short}). ${url}`);
   if (!href) return <span className="note">WhatsApp contact coming soon.</span>;
   return (
-    <a className={`btn wa ${big ? "big" : ""}`} href={href} target="_blank" rel="noopener noreferrer">
+    <a className={`btn btn-wa${big ? " btn-lg" : ""}`} href={href} target="_blank" rel="noopener noreferrer">
       <WhatsAppIcon />
-      {label}
+      <span>{label}</span>
     </a>
   );
 }
 
-/** A listing's own photo, or clearly-labelled decorative artwork when the owner has not added one. */
-export function ListingMedia({ l, w, h, eager, labelLong, index }: { l: PublicListing; w: number; h: number; eager?: boolean; labelLong?: boolean; index?: number }) {
-  if (l.image_url)
-    return <img src={`${l.image_url}?tr=w-${w},h-${h},fo-auto`} alt={`Photo of ${l.title}`} loading={eager ? "eager" : "lazy"} />;
+/** HUD corner brackets around media (decorative). */
+export function Brackets() {
+  return (
+    <span className="brackets" aria-hidden="true">
+      <i /><i /><i /><i />
+    </span>
+  );
+}
+
+/** A listing's own photo, or clearly-labelled artwork (not this account) when the owner has not added one. */
+export function ListingMedia({ l, w, h, eager, labelLong, index, fit }: { l: PublicListing; w: number; h?: number; eager?: boolean; labelLong?: boolean; index?: number; fit?: boolean }) {
+  if (l.image_url) {
+    const tr = h ? `w-${w},h-${h},fo-auto` : `w-${w}`;
+    return <img src={`${l.image_url}?tr=${tr}`} alt={`Photo of ${l.title}`} loading={eager ? "eager" : "lazy"} decoding="async" className={fit ? "is-photo is-fit" : "is-photo"} />;
+  }
   return (
     <>
-      <img src={fallbackArt(l.id, index)} alt="" loading={eager ? "eager" : "lazy"} className="is-art" />
-      <span className="art-chip">
-        <Icon name="image" size={12} /> {labelLong ? "Illustration — the seller hasn't added a photo of this account" : "Illustration · no photo yet"}
-      </span>
+      <img src={cardArt(l.id, index)} alt="" loading={eager ? "eager" : "lazy"} decoding="async" className="is-art" />
+      <span className="art-chip">{labelLong ? "Artwork for illustration — the seller hasn't added a photo of this account yet" : "Artwork · no account photo yet"}</span>
     </>
   );
 }
 
-export function ListingCard({ l, index, view }: { l: PublicListing; index?: number; view?: PriceView }) {
+export function ListingCard({ l, index = 0, view }: { l: PublicListing; index?: number; view?: PriceView }) {
   const first = l.description.split(/\r?\n/).find((x) => x.trim() !== "") ?? "";
   return (
-    <Link href={`/accounts/${l.id}`} className="card">
-      <div className="img">
-        <ListingMedia l={l} w={720} h={450} index={index} />
-      </div>
-      <div className="body">
-        <span className="tag">Available</span>
-        <h3>{l.title}</h3>
-        {first && <div className="snippet">{first.trim()}</div>}
-        <div className="foot">
-          <Price l={l} view={view} />
-          <span className="more">
-            View <Icon name="chevronRight" size={16} />
+    <Link href={`/accounts/${l.id}`} className="acard" data-tilt data-reveal="card" style={{ ["--i" as string]: index % 8 }}>
+      <span className="acard-in">
+      <span className="acard-media">
+        <ListingMedia l={l} w={800} h={600} index={index} />
+        <span className="acard-scan" aria-hidden="true" />
+        <span className="acard-status"><i /> Available</span>
+        <span className="acard-ref">#{l.id.slice(-6).toUpperCase()}</span>
+        <Brackets />
+      </span>
+      <span className="acard-body">
+        <span className="acard-title">{l.title}</span>
+        {first && <span className="acard-snippet">{first.trim()}</span>}
+        <span className="acard-foot">
+          <Price l={l} view={view} size="card" />
+          <span className="acard-go">
+            View <Glyph name="arrow" size={16} />
           </span>
-        </div>
-      </div>
+        </span>
+      </span>
+      </span>
     </Link>
+  );
+}
+
+/** Search field with its button attached; submits to the inventory page. */
+export function SearchBar({ q = "", id, autoFocus, className = "" }: { q?: string; id?: string; autoFocus?: boolean; className?: string }) {
+  return (
+    <form className={`search-bar ${className}`} action="/accounts" method="get" role="search" id={id}>
+      <label className="search-field">
+        <Glyph name="search" />
+        <input name="q" defaultValue={q} placeholder="Search accounts — Conqueror, Glacier, X-Suit…" aria-label="Search accounts" autoComplete="off" enterKeyHint="search" autoFocus={autoFocus} maxLength={100} />
+      </label>
+      <button className="btn btn-red" type="submit">Search</button>
+    </form>
   );
 }

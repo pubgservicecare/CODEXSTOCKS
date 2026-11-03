@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType, type ReactNode } from "react";
 import { BrowserRouter, HashRouter, Navigate, NavLink, Route, Routes, useLocation } from "react-router-dom";
 import { AppCtx, errMsg, Field, Modal, Notice, useLoad } from "./components";
 import { Icon, LogoMark, type IconName } from "./icons";
@@ -108,7 +108,7 @@ function UnlockDialog({ svc, onDone }: { svc: DataService; onDone: (ok: boolean)
   );
 }
 
-function SyncBadge({ s }: { s: SyncSummary | null }) {
+export function SyncBadge({ s }: { s: SyncSummary | null }) {
   if (!s) return null;
   const issues = s.failed + s.rejected + s.conflicts + s.failedImages;
   const queued = s.pending + s.queuedImages;
@@ -130,7 +130,7 @@ function SyncBadge({ s }: { s: SyncSummary | null }) {
   );
 }
 
-const NAV: { group: string; items: [string, string, IconName][] }[] = [
+export const NAV: { group: string; items: [string, string, IconName][] }[] = [
   { group: "Inventory", items: [["/", "Dashboard", "dashboard"], ["/accounts", "Accounts", "accounts"]] },
   { group: "Money", items: [["/sales", "Sales & refunds", "sales"], ["/expenses", "Expenses", "expenses"]] },
   { group: "Records", items: [["/history", "History", "history"], ["/sync", "Sync & conflicts", "sync"]] },
@@ -141,7 +141,7 @@ const NAV: { group: string; items: [string, string, IconName][] }[] = [
  * On phones, wide tables are shown as stacked cards (CSS). Each cell gets its column name as a
  * data-label so no column is hidden; this fills the labels for every table in the page.
  */
-function useTableLabels(root: React.RefObject<HTMLElement | null>) {
+export function useTableLabels(root: React.RefObject<HTMLElement | null>) {
   useEffect(() => {
     const el = root.current;
     if (!el) return;
@@ -161,7 +161,13 @@ function useTableLabels(root: React.RefObject<HTMLElement | null>) {
   }, [root]);
 }
 
-const TABS: [string, string, IconName][] = [["/", "Home", "dashboard"], ["/accounts", "Accounts", "accounts"], ["/accounts/new", "New", "plus"], ["/sales", "Sales", "sales"]];
+export const TABS: [string, string, IconName][] = [["/", "Home", "dashboard"], ["/accounts", "Accounts", "accounts"], ["/accounts/new", "New", "plus"], ["/sales", "Sales", "sales"]];
+
+/** Optional presentation overrides (the admin website passes its own shell and dashboard; the desktop app passes none). */
+export interface AdminPresentation {
+  shell?: ComponentType<{ children: ReactNode; svc: DataService }>;
+  dashboard?: ComponentType;
+}
 
 function Shell({ children, svc }: { children: ReactNode; svc: DataService }) {
   const [sync, setSync] = useState<SyncSummary | null>(null);
@@ -265,7 +271,9 @@ function Shell({ children, svc }: { children: ReactNode; svc: DataService }) {
   );
 }
 
-export function AdminApp({ svc, router = "hash", basename }: { svc: DataService; router?: "hash" | "browser"; basename?: string }) {
+export function AdminApp({ svc, router = "hash", basename, presentation }: { svc: DataService; router?: "hash" | "browser"; basename?: string; presentation?: AdminPresentation }) {
+  const ShellView = presentation?.shell ?? Shell;
+  const DashboardView = presentation?.dashboard ?? Dashboard;
   const [version, setVersion] = useState(0);
   const [toasts, setToasts] = useState<{ id: number; msg: string; kind: "ok" | "bad" }[]>([]);
   const [unlockReq, setUnlockReq] = useState<((ok: boolean) => void) | null>(null);
@@ -293,9 +301,9 @@ export function AdminApp({ svc, router = "hash", basename }: { svc: DataService;
     <AppCtx.Provider value={ctx}>
       <FxProvider svc={svc}>
       <Router basename={router === "browser" ? basename : undefined}>
-        <Shell svc={svc}>
+        <ShellView svc={svc}>
           <Routes>
-            <Route path="/" element={<Dashboard />} />
+            <Route path="/" element={<DashboardView />} />
             <Route path="/accounts" element={<AccountsPage />} />
             <Route path="/accounts/new" element={<AccountForm />} />
             <Route path="/accounts/:id" element={<AccountDetail />} />
@@ -309,7 +317,7 @@ export function AdminApp({ svc, router = "hash", basename }: { svc: DataService;
             <Route path="/history" element={<HistoryPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
-        </Shell>
+        </ShellView>
       </Router>
       </FxProvider>
       {unlockReq && (
