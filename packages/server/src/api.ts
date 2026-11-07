@@ -462,17 +462,19 @@ route("POST", "/admin/commands/:name", "owner", async (c) => {
 
 route("GET", "/admin/dashboard", "owner", async (c) => {
   const store = new PgEntityStore(c.cfg.db, "web");
-  const [accounts, sales, refunds, expenses, plans, payments] = await Promise.all([
+  // All seven reads at once: one database round trip instead of two in a row.
+  const [accounts, sales, refunds, expenses, plans, payments, sync] = await Promise.all([
     store.list("accounts"),
     store.list("sales"),
     store.list("refunds"),
     store.list("expenses"),
     store.list("installment_plans"),
     store.list("payments"),
+    cloudSyncStatus(c.cfg.db),
   ]);
   const asOf = c.url.searchParams.get("as_of");
   const report = computeReport({ accounts, sales, refunds, expenses, plans, payments, asOf: asOf && /^\d{4}-\d{2}-\d{2}$/.test(asOf) ? asOf : undefined });
-  return json({ report, sync: await cloudSyncStatus(c.cfg.db) }, 200, c.cors);
+  return json({ report, sync }, 200, c.cors);
 });
 
 export interface CloudSyncStatus {
@@ -517,10 +519,12 @@ route("GET", "/admin/conflicts", "owner", async (c) => {
     [c.url.searchParams.get("status") === "resolved" ? "resolved" : "open"],
   );
   const store = new PgEntityStore(c.cfg.db, "web");
-  const out = [];
-  for (const row of r.rows as { entity: string; entity_id: string }[]) {
-    out.push({ ...row, server_row: isEntity(row.entity) ? await store.get(row.entity, row.entity_id) : null });
-  }
+  const out = await Promise.all(
+    (r.rows as { entity: string; entity_id: string }[]).map(async (row) => ({
+      ...row,
+      server_row: isEntity(row.entity) ? await store.get(row.entity, row.entity_id) : null,
+    })),
+  );
   return json(out, 200, c.cors);
 });
 
@@ -696,9 +700,67 @@ route("GET", "/public/listings/:id", "public", async (c) => {
 
 route("GET", "/public/settings", "public", async (c) => json(await queryPublicSettings(c.cfg.db), 200, { ...PUBLIC_CACHE, ...c.cors }));
 
+/**
+ * Several read-only admin GET requests in one round trip (the admin website sends the requests a screen makes at the
+ * same moment together). The session is checked once for the whole batch; every item then runs through the normal
+ * route handler with the same session, so its result is exactly what the separate request would have returned.
+ * Only GET routes under /admin/ are allowed — no writes, no public or login routes, no nested batches.
+ */
+export const MAX_BATCH = 20;
+route("POST", "/admin/batch", "owner", async (c) => {
+  const body = z.object({ requests: z.array(z.string().min(1).max(2000)).min(1).max(MAX_BATCH) }).parse(await c.body());
+  const responses = await Promise.all(
+    body.requests.map(async (target) => {
+      let url: URL;
+      let path: string;
+      let found: ReturnType<typeof matchRoute>;
+      try {
+        url = new URL(PREFIX + target, c.url);
+        path = url.pathname.slice(PREFIX.length);
+        found = path.startsWith("/admin/") && url.origin === c.url.origin ? matchRoute("GET", path) : null;
+      } catch {
+        // Unparseable URL or a malformed %-escape in a path parameter: only this item fails.
+        return { status: 400, body: JSON.stringify({ error: { code: "bad_request", message: "Invalid path" } }) };
+      }
+      if (!found || !("route" in found) || found.route.auth !== "owner")
+        return { status: 404, body: JSON.stringify({ error: { code: "not_found", message: "Not found" } }) };
+      const sub: Ctx = { ...c, url, params: found.params, body: async () => ({}) };
+      const res = await found.route.handler(sub).catch((e) => errorResponse(e, c.cors, c.cfg, "GET", path));
+      return { status: res.status, body: await res.text() };
+    }),
+  );
+  return json({ responses }, 200, c.cors);
+});
+
 /* ------------------------------------------------------------------ */
 /* Dispatcher                                                          */
 /* ------------------------------------------------------------------ */
+
+function matchRoute(method: string, path: string): { route: Route; params: Record<string, string> } | { methodMismatch: true } | null {
+  let methodMismatch = false;
+  for (const r of routes) {
+    const m = r.pattern.exec(path);
+    if (!m) continue;
+    if (r.method !== method) {
+      methodMismatch = true;
+      continue;
+    }
+    return { route: r, params: Object.fromEntries(r.keys.map((k, i) => [k, decodeURIComponent(m[i + 1])])) };
+  }
+  return methodMismatch ? { methodMismatch: true } : null;
+}
+
+function errorResponse(e: unknown, cors: Record<string, string>, cfg: ApiConfig, method: string, path: string): Response {
+  if (e instanceof HttpError) return json({ error: { code: e.code, message: e.message, ...e.extra } }, e.status, cors);
+  if (e instanceof z.ZodError) return json({ error: { code: "validation", message: firstIssue(e) } }, 400, cors);
+  if (e instanceof RuleError) return json({ error: { code: e.code, message: e.message } }, 422, cors);
+  if (e instanceof ConflictError) return json({ error: { code: "conflict", message: e.message, current: e.current ?? null } }, 409, cors);
+  const pgCode = (e as { code?: string }).code;
+  if (pgCode === "23505") return json({ error: { code: "constraint_unique", message: "Duplicate record" } }, 409, cors);
+  // Log only the error type/message — request bodies (which may hold ciphertext) are never logged.
+  (cfg.log ?? ((m: string) => console.error(m)))(`[api] ${method} ${path} failed: ${(e as Error)?.name}: ${(e as Error)?.message}`);
+  return json({ error: { code: "internal", message: "Internal server error" } }, 500, cors);
+}
 
 export function createApi(cfg: ApiConfig): (req: Request) => Promise<Response> {
   const log = cfg.log ?? ((m: string) => console.error(m));
@@ -722,22 +784,12 @@ export function createApi(cfg: ApiConfig): (req: Request) => Promise<Response> {
     }
     if (!url.pathname.startsWith(PREFIX)) return json({ error: { code: "not_found", message: "Not found" } }, 404, cors);
     const path = url.pathname.slice(PREFIX.length) || "/";
-    let matched: Route | undefined;
-    let params: Record<string, string> = {};
-    let methodMismatch = false;
-    for (const r of routes) {
-      const m = r.pattern.exec(path);
-      if (!m) continue;
-      if (r.method !== req.method) {
-        methodMismatch = true;
-        continue;
-      }
-      matched = r;
-      params = Object.fromEntries(r.keys.map((k, i) => [k, decodeURIComponent(m[i + 1])]));
-      break;
-    }
-    if (!matched)
+    const found = matchRoute(req.method, path);
+    if (!found || !("route" in found)) {
+      const methodMismatch = !!found;
       return json({ error: { code: methodMismatch ? "method" : "not_found", message: "Not found" } }, methodMismatch ? 405 : 404, cors);
+    }
+    const { route: matched, params } = found;
 
     const now = cfg.now?.() ?? new Date();
     let cached: unknown;
@@ -769,16 +821,7 @@ export function createApi(cfg: ApiConfig): (req: Request) => Promise<Response> {
       }
       return await matched.handler(ctx);
     } catch (e) {
-      if (e instanceof HttpError) return json({ error: { code: e.code, message: e.message, ...e.extra } }, e.status, cors);
-      if (e instanceof z.ZodError) return json({ error: { code: "validation", message: firstIssue(e) } }, 400, cors);
-      if (e instanceof RuleError) return json({ error: { code: e.code, message: e.message } }, 422, cors);
-      if (e instanceof ConflictError)
-        return json({ error: { code: "conflict", message: e.message, current: e.current ?? null } }, 409, cors);
-      const pgCode = (e as { code?: string }).code;
-      if (pgCode === "23505") return json({ error: { code: "constraint_unique", message: "Duplicate record" } }, 409, cors);
-      // Log only the error type/message — request bodies (which may hold ciphertext) are never logged.
-      log(`[api] ${req.method} ${path} failed: ${(e as Error)?.name}: ${(e as Error)?.message}`);
-      return json({ error: { code: "internal", message: "Internal server error" } }, 500, cors);
+      return errorResponse(e, cors, { ...cfg, log }, req.method, path);
     }
   };
 }

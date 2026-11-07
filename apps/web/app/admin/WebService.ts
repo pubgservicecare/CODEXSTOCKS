@@ -24,6 +24,7 @@ import {
   type LoginLink,
 } from "@codex/shared";
 import type { ConflictView, DataService, Prefs, SyncSummary } from "@codex/ui";
+import { batchingFetch } from "./batchFetch";
 
 export interface WebServiceOptions {
   /** API origin (default: this page's origin). */
@@ -67,7 +68,8 @@ function readPrefs(origin: string): Prefs {
  */
 export function webService(username: string, opts: WebServiceOptions = {}): DataService {
   const origin = opts.baseUrl ?? window.location.origin;
-  const api = new ApiClient({ baseUrl: origin, credentials: "same-origin", fetchImpl: opts.fetchImpl });
+  // Reads made at the same moment travel as one request (see batchFetch.ts); ImageKit uploads keep the plain fetch.
+  const api = new ApiClient({ baseUrl: origin, credentials: "same-origin", fetchImpl: batchingFetch(opts.fetchImpl ?? ((...a) => fetch(...a)), origin) });
   let key: VaultKey | null = null;
   const listeners = new Set<() => void>();
   const emit = () => listeners.forEach((l) => l());

@@ -51,6 +51,11 @@ export async function createPgDb(connectionString: string, opts: { max?: number 
     },
   });
 
+  // An idle pooled connection can be closed by the database side (Neon's pooler, a network blip, compute suspend).
+  // pg reports that as an "error" event on the pool; without a listener Node treats it as uncaught and the whole
+  // server instance crashes. The pool already discards the broken connection, so logging it is enough.
+  pool.on("error", (e: Error) => console.error(`[db] idle connection closed: ${e.message}`));
+
   type Client = { query: (sql: string, params?: unknown[]) => Promise<{ rows: Record<string, unknown>[]; rowCount: number | null }> };
   const wrap = (c: Client, inTx: boolean): Db => ({
     async query<T>(sql: string, params: unknown[] = []) {

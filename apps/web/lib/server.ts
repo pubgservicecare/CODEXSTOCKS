@@ -16,7 +16,8 @@ export function isDemoMode(): boolean {
 }
 
 async function openDb(): Promise<Db> {
-  if (process.env.DATABASE_URL) return createPgDb(process.env.DATABASE_URL, { max: 5 });
+  // Up to 10 connections: a dashboard batch runs about ten reads at once (Neon's pooler serves many clients).
+  if (process.env.DATABASE_URL) return createPgDb(process.env.DATABASE_URL, { max: 10 });
   if (isDemoMode()) {
     // Throw-away in-memory Postgres for local previews ONLY. Never used in production.
     const db = await createPgliteDb();

@@ -17,11 +17,12 @@ export default async function AdminPage() {
   let unavailable = false;
   try {
     const db = await getDb();
-    const auth = await authenticate(db, token, new Date());
-    if (auth?.kind === "web") {
-      const r = await db.query<{ username: string }>("SELECT username FROM owner");
-      username = r.rows[0]?.username ?? null;
-    }
+    // Both reads at once (one database round trip); the name is only used when the session is valid.
+    const [auth, owner] = await Promise.all([
+      authenticate(db, token, new Date()),
+      token ? db.query<{ username: string }>("SELECT username FROM owner") : null,
+    ]);
+    if (auth?.kind === "web") username = owner?.rows[0]?.username ?? null;
   } catch {
     unavailable = true;
   }

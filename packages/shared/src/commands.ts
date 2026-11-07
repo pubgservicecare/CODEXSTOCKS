@@ -707,9 +707,10 @@ export interface AccountBundle {
 }
 
 export async function loadAccountBundle(r: RowReader, id: string): Promise<AccountBundle | null> {
-  const account = await r.get("accounts", id);
-  if (!account || account.deleted) return null;
-  const [links, creds, sets, codes, sales, refunds, expenses] = await Promise.all([
+  // Everything is read at once (one round trip on the website instead of two); the related rows are simply
+  // discarded when the account does not exist.
+  const [account, links, creds, sets, codes, sales, refunds, expenses] = await Promise.all([
+    r.get("accounts", id),
     r.list("login_links", { account_id: id }),
     r.list("credentials", { account_id: id }),
     r.list("backup_code_sets", { account_id: id }),
@@ -718,6 +719,7 @@ export async function loadAccountBundle(r: RowReader, id: string): Promise<Accou
     r.list("refunds", { account_id: id }),
     r.list("expenses", { account_id: id }),
   ]);
+  if (!account || account.deleted) return null;
   const kindOrder = { email: 0, phone: 1, social: 2 } as const;
   return {
     account,
