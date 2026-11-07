@@ -1,20 +1,24 @@
 import { useEffect, useState } from "react";
 import { Icon } from "../icons";
-import { CURRENCIES, SETTING_KEYS, type SettingKey } from "@codex/shared";
-import { errMsg, Field, Modal, useAction, useApp, useLoad } from "../components";
+import { CURRENCIES, formatRate, formatUsdtPkr, localDate, parseManualUsdtRate, parseUsdtPkr, type SettingKey } from "@codex/shared";
+import { errMsg, Field, Modal, Notice, useAction, useApp, useLoad } from "../components";
+import { useFx } from "../fx-ui";
+
+const STORE_KEYS = ["store_name", "store_tagline", "public_whatsapp", "default_currency"] as const satisfies readonly SettingKey[];
+const CONTACT_KEYS = ["contact_owner", "contact_phone", "contact_email", "contact_website", "contact_address", "contact_hours", "contact_social", "contact_other"] as const satisfies readonly SettingKey[];
 
 function StoreSettings() {
   const { svc } = useApp();
   const { busy, run } = useAction();
   const { data } = useLoad(() => svc.list("settings"), []);
-  const [f, setF] = useState<Record<SettingKey, string>>({ store_name: "CODE X STOCKS", store_tagline: "", public_whatsapp: "", default_currency: "PKR" });
+  const [f, setF] = useState<Record<(typeof STORE_KEYS)[number], string>>({ store_name: "CODE X STOCKS", store_tagline: "", public_whatsapp: "", default_currency: "PKR" });
   useEffect(() => {
-    if (data) setF((cur) => ({ ...cur, ...Object.fromEntries(data.map((s) => [s.key, s.value])) }));
+    if (data) setF((cur) => ({ ...cur, ...Object.fromEntries(data.filter((s) => (STORE_KEYS as readonly string[]).includes(s.key)).map((s) => [s.key, s.value])) }));
   }, [data]);
   const save = () =>
     run(async () => {
       const before = Object.fromEntries((data ?? []).map((s) => [s.key, s.value]));
-      for (const k of SETTING_KEYS) if ((before[k] ?? "") !== f[k]) await svc.exec("saveSetting", { key: k, value: f[k] });
+      for (const k of STORE_KEYS) if ((before[k] ?? "") !== f[k]) await svc.exec("saveSetting", { key: k, value: f[k] });
     }, "Settings saved");
   return (
     <div className="card">
@@ -182,11 +186,116 @@ function Security() {
   );
 }
 
+/** Public business details printed on receipts. Empty fields are simply left off — nothing is invented. */
+function ContactSettings() {
+  const { svc } = useApp();
+  const { busy, run } = useAction();
+  const { data } = useLoad(() => svc.list("settings"), []);
+  const [f, setF] = useState<Record<(typeof CONTACT_KEYS)[number], string>>(() => Object.fromEntries(CONTACT_KEYS.map((k) => [k, ""])) as Record<(typeof CONTACT_KEYS)[number], string>);
+  useEffect(() => {
+    if (data) setF((cur) => ({ ...cur, ...Object.fromEntries(data.filter((s) => (CONTACT_KEYS as readonly string[]).includes(s.key)).map((s) => [s.key, s.value])) }));
+  }, [data]);
+  const up = (k: (typeof CONTACT_KEYS)[number]) => (e: { target: { value: string } }) => setF({ ...f, [k]: e.target.value });
+  const save = () =>
+    run(async () => {
+      const before = Object.fromEntries((data ?? []).map((s) => [s.key, s.value]));
+      for (const k of CONTACT_KEYS) if ((before[k] ?? "") !== f[k]) await svc.exec("saveSetting", { key: k, value: f[k].trim() });
+    }, "Contact details saved");
+  return (
+    <div className="card">
+      <div className="card-head"><span className="icon-tile"><Icon name="receipt" size={16} /></span><h2>Contact information · shown on receipts</h2></div>
+      <p className="small muted" style={{ marginTop: -6 }}>
+        Only public business details belong here. The business name and WhatsApp number come from the store settings above. Never put passwords,
+        account logins or private notes in these fields.
+      </p>
+      <div className="form-grid">
+        <Field label="Owner / display name" optional><input value={f.contact_owner} onChange={up("contact_owner")} maxLength={200} /></Field>
+        <Field label="Phone" optional><input value={f.contact_phone} onChange={up("contact_phone")} maxLength={60} inputMode="tel" /></Field>
+        <Field label="Email" optional><input value={f.contact_email} onChange={up("contact_email")} maxLength={200} inputMode="email" /></Field>
+        <Field label="Website" optional><input value={f.contact_website} onChange={up("contact_website")} maxLength={200} placeholder="codexstocks.org" /></Field>
+        <Field label="Address" optional className="full"><input value={f.contact_address} onChange={up("contact_address")} maxLength={300} /></Field>
+        <Field label="Business hours" optional><input value={f.contact_hours} onChange={up("contact_hours")} maxLength={200} placeholder="e.g. 11 am – 11 pm, every day" /></Field>
+        <Field label="Other public contact" optional><input value={f.contact_other} onChange={up("contact_other")} maxLength={300} /></Field>
+        <Field label="Social links" optional hint="One per line, e.g. Instagram: @codexstocks" className="full"><textarea rows={3} value={f.contact_social} onChange={up("contact_social")} maxLength={1000} /></Field>
+      </div>
+      <button className="btn primary" disabled={busy} onClick={save}>Save contact details</button>
+    </div>
+  );
+}
+
+/** USDT (Tether) is its own currency: reference rate from CoinGecko, or the owner's own rate (e.g. the P2P rate used). */
+function UsdtRateSettings() {
+  const { svc, toast } = useApp();
+  const { usdtProvider, usdt, usdtMode } = useFx();
+  const { data } = useLoad(() => svc.list("settings"), []);
+  const saved = parseManualUsdtRate(data?.find((s) => s.key === "usdt_pkr_manual")?.value);
+  const [mode, setMode] = useState<"provider" | "manual">(usdtMode);
+  const [rate, setRate] = useState("");
+  const [eff, setEff] = useState(localDate());
+  const [note, setNote] = useState("");
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => setMode(usdtMode), [usdtMode]);
+  useEffect(() => {
+    if (saved && !rate) {
+      setRate(formatRate(saved.rate_micro));
+      setEff(saved.effective_on);
+      setNote(saved.note ?? "");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [saved?.set_at]);
+  const save = async () => {
+    setErr(null);
+    setBusy(true);
+    try {
+      const micro = rate.trim() ? parseUsdtPkr(rate) : null;
+      if (mode === "manual" && !micro) throw new Error("Enter your USDT rate in PKR");
+      await svc.exec("setUsdtRate", { mode, rate_micro: micro, effective_on: eff, note });
+      toast("USDT rate saved");
+    } catch (e) {
+      setErr(errMsg(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="card">
+      <div className="card-head"><span className="icon-tile"><Icon name="wallet" size={16} /></span><h2>USDT rate</h2>{usdt && <span className="badge">{formatUsdtPkr(usdt.usdt_pkr_micro)}</span>}</div>
+      <p className="small muted" style={{ marginTop: -6 }}>
+        Used for the USDT equivalent of your profit and charts, and suggested when a payment is made in USDT. USDT is never treated as USD.
+      </p>
+      <div className="seg" role="group" aria-label="USDT rate source" style={{ marginBottom: 12 }}>
+        <button type="button" className={mode === "provider" ? "on" : ""} aria-pressed={mode === "provider"} onClick={() => setMode("provider")}>Reference rate</button>
+        <button type="button" className={mode === "manual" ? "on" : ""} aria-pressed={mode === "manual"} onClick={() => setMode("manual")}>My own rate</button>
+      </div>
+      <p className="small">
+        {usdtProvider ? (
+          <>Reference: <b>{formatUsdtPkr(usdtProvider.usdt_pkr_micro)}</b> · Powered by CoinGecko · {new Date(usdtProvider.effective_at ?? usdtProvider.retrieved_at).toLocaleString()}{usdtProvider.status === "stale" ? <b className="fx-stale"> · stale</b> : null}</>
+        ) : (
+          <span className="faint">Reference rate unavailable right now (offline or the provider did not answer). No rate is made up — use your own rate.</span>
+        )}
+      </p>
+      <div className="form-grid">
+        <Field label="My USDT rate (PKR per 1 USDT)" optional={mode === "provider"} hint={saved ? `Saved: ${formatUsdtPkr(saved.rate_micro)} from ${saved.effective_on}` : undefined}>
+          <input value={rate} onChange={(e) => setRate(e.target.value)} inputMode="decimal" placeholder="e.g. 281.50" />
+        </Field>
+        <Field label="Effective date"><input type="date" value={eff} onChange={(e) => setEff(e.target.value)} /></Field>
+        <Field label="Note" optional className="full"><input value={note} onChange={(e) => setNote(e.target.value)} maxLength={200} placeholder="e.g. Binance P2P rate" /></Field>
+      </div>
+      {err && <Notice kind="bad">{err}</Notice>}
+      <button className="btn primary" disabled={busy} onClick={() => void save()}>Save USDT rate</button>
+      <p className="small faint" style={{ marginBottom: 0 }}>Payments keep the rate saved with them; changing this never alters past records.</p>
+    </div>
+  );
+}
+
 export function SettingsPage() {
   return (
     <>
-      <div className="cx-page-head"><div><h1>Settings</h1><p>Store details shown on the website, this device, cloud connection and security.</p></div></div>
+      <div className="cx-page-head"><div><h1>Settings</h1><p>Store details shown on the website, receipt contact details, USDT rate, this device, cloud connection and security.</p></div></div>
       <StoreSettings />
+      <ContactSettings />
+      <UsdtRateSettings />
       <LocalPrefs />
       <CloudCard />
       <Security />

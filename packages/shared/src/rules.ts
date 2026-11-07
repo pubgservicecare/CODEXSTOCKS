@@ -1,5 +1,5 @@
 import { saleRateFromUsdPkr } from "./fx";
-import type { AccountStatus, AnyRow, CodeState, Entity, EntityRowMap, LoginLink, Sale } from "./entities";
+import type { AccountStatus, AnyRow, CodeState, Entity, EntityRowMap, InstallmentPlan, LoginLink, Payment, Receipt, Sale } from "./entities";
 
 /** A business-rule violation. `code` is stable and safe to show/log (no secrets). */
 export class RuleError extends Error {
@@ -186,6 +186,7 @@ export async function checkInvariants<E extends Entity>(
   row: EntityRowMap[E],
   prev: EntityRowMap[E] | null,
 ): Promise<void> {
+  if (row.deleted && (entity === "payments" || entity === "receipts")) throw new RuleError("immutable", "Payments and receipts are never deleted; reverse a payment instead");
   if (row.deleted && entity !== "login_links" && entity !== "audit_events") return;
   switch (entity) {
     case "login_links": {
@@ -265,6 +266,7 @@ export async function checkInvariants<E extends Entity>(
         const dup = (await r.list("sales", { account_id: s.account_id })).find((x) => x.id !== s.id && isActiveSale(x));
         if (dup) throw new RuleError("duplicate_sale", "This account already has a completed sale");
       }
+      await assertPlanAllowsSaleChange(r, s, prev as Sale | null);
       return;
     }
     case "refunds": {
@@ -277,13 +279,81 @@ export async function checkInvariants<E extends Entity>(
       const others = (await r.list("refunds", { sale_id: f.sale_id })).filter((x) => x.id !== f.id);
       const total = others.reduce((a, x) => a + x.amount_minor, 0) + f.amount_minor;
       if (total > sale.amount_minor) throw new RuleError("refund_exceeds", "Refunds cannot exceed the sale amount");
+      if (!prev && (await r.list("installment_plans", { sale_id: sale.id })).some((p) => p.status === "active"))
+        throw new RuleError("plan_active", "This sale has an active installment plan. Cancel the plan before refunding.");
       return;
     }
     case "audit_events": {
       if (prev) throw new RuleError("audit_immutable", "Audit events are append-only");
       return;
     }
+    case "installment_plans": {
+      const p = row as InstallmentPlan;
+      const q = prev as InstallmentPlan | null;
+      if (q) {
+        for (const k of ["account_id", "sale_id", "currency", "original_minor", "advance_minor", "start_on"] as const)
+          if (p[k] !== q[k]) throw new RuleError("plan_immutable", "The sale, price, advance and start date of a plan cannot change");
+        if (q.status === "cancelled" && p.status !== "cancelled") throw new RuleError("plan_cancelled", "A cancelled plan cannot be reopened");
+        return;
+      }
+      const sale = await r.get("sales", p.sale_id);
+      if (!sale || sale.deleted || sale.account_id !== p.account_id) throw new RuleError("parent_missing", "Plan refers to an unknown sale");
+      if (sale.currency !== p.currency || sale.amount_minor !== p.original_minor)
+        throw new RuleError("plan_sale_mismatch", "The plan must match its sale (same price and currency)");
+      const others = (await r.list("installment_plans", { sale_id: p.sale_id })).filter((x) => x.id !== p.id);
+      if (others.length) throw new RuleError("plan_duplicate", "This sale already has an installment plan");
+      return;
+    }
+    case "payments": {
+      const p = row as Payment;
+      const q = prev as Payment | null;
+      if (q) {
+        // Payments are never edited: the only change is recorded -> reversed (with a reason).
+        const same = (k: string) => JSON.stringify((p as Record<string, unknown>)[k]) === JSON.stringify((q as Record<string, unknown>)[k]);
+        const fixed = Object.keys(p).filter((k) => !["rev", "updated_at", "status", "reversed_at", "reversal_reason"].includes(k));
+        if (!fixed.every(same) || (q.status === "reversed" && p.status !== "reversed"))
+          throw new RuleError("payment_immutable", "Recorded payments cannot be changed; reverse the payment instead");
+        return;
+      }
+      if (p.target === "plan") {
+        const plan = await r.get("installment_plans", p.plan_id!);
+        if (!plan || plan.deleted) throw new RuleError("parent_missing", "Payment refers to an unknown plan");
+        if (p.currency !== plan.currency && !p.rate_micro) throw new RuleError("rate_required", "A conversion rate is required");
+      } else {
+        const debt = await r.get("debts", p.debt_id!);
+        if (!debt || debt.deleted) throw new RuleError("parent_missing", "Payment refers to an unknown record");
+        if ((debt.direction === "receive") !== (p.kind === "receive")) throw new RuleError("payment_kind", "Payment type does not match the record");
+        if (p.currency !== debt.currency && !p.rate_micro) throw new RuleError("rate_required", "A conversion rate is required");
+      }
+      const dup = (await r.list("payments", { receipt_no: p.receipt_no })).find((x) => x.id !== p.id);
+      if (dup) throw new RuleError("receipt_duplicate", "Receipt number already used");
+      return;
+    }
+    case "receipts": {
+      if (prev) throw new RuleError("receipt_immutable", "Issued receipts cannot be changed");
+      const rc = row as Receipt;
+      if (rc.plan_id && !(await r.get("installment_plans", rc.plan_id))) throw new RuleError("parent_missing", "Receipt refers to an unknown plan");
+      if (rc.payment_id && !(await r.get("payments", rc.payment_id))) throw new RuleError("parent_missing", "Receipt refers to an unknown payment");
+      const dup = (await r.list("receipts", { receipt_no: rc.receipt_no })).find((x) => x.id !== rc.id);
+      if (dup) throw new RuleError("receipt_duplicate", "Receipt number already used");
+      return;
+    }
     default:
       return;
+  }
+}
+
+/**
+ * A sale that belongs to an installment plan may only be voided while the plan has no recorded payments
+ * (cancel the plan instead), and not refunded while the plan is still running.
+ */
+async function assertPlanAllowsSaleChange(r: RowReader, sale: Sale, prev: Sale | null) {
+  if (!prev || prev.status !== "completed" || sale.status === "completed") return;
+  const plans = (await r.list("installment_plans", { sale_id: sale.id })).filter((p) => !p.deleted);
+  for (const plan of plans) {
+    if (sale.status === "voided") {
+      const paid = (await r.list("payments", { plan_id: plan.id })).some((x) => x.status === "recorded");
+      if (paid) throw new RuleError("plan_has_payments", "This sale has an installment plan with recorded payments. Cancel the plan instead of voiding the sale.");
+    } else if (plan.status === "active") throw new RuleError("plan_active", "This sale has an active installment plan. Cancel the plan before refunding.");
   }
 }

@@ -165,8 +165,25 @@ export async function migrateLocal(db: LocalDb): Promise<void> {
     await q.run(`CREATE INDEX IF NOT EXISTS backup_codes_set ON backup_codes(set_id)`);
     await q.run(`CREATE INDEX IF NOT EXISTS sales_acc ON sales(account_id)`);
     await q.run(`CREATE INDEX IF NOT EXISTS refunds_sale ON refunds(sale_id)`);
+    await q.run(`CREATE INDEX IF NOT EXISTS payments_plan ON payments(plan_id)`);
+    await q.run(`CREATE INDEX IF NOT EXISTS payments_debt ON payments(debt_id)`);
+    await q.run(`CREATE INDEX IF NOT EXISTS plans_account ON installment_plans(account_id)`);
     await q.run(`INSERT OR IGNORE INTO kv (key, value) VALUES ('schema_version', ?)`, [String(LOCAL_SCHEMA_VERSION)]);
+    // An app update that knows new record types or fields downloads everything once more: older versions
+    // skipped records they did not know, and their sync position had already moved past them.
+    const fp = schemaFingerprint();
+    const seen = await q.one<{ value: string }>(`SELECT value FROM kv WHERE key = 'sync_schema'`);
+    if (!seen || JSON.parse(seen.value) !== fp) {
+      const cursor = await q.one<{ value: string }>(`SELECT value FROM kv WHERE key = 'sync_cursor'`);
+      if (cursor && Number(JSON.parse(cursor.value)) > 0) await q.run(`UPDATE kv SET value = '0' WHERE key = 'sync_cursor'`);
+      await q.run(`INSERT INTO kv (key, value) VALUES ('sync_schema', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`, [JSON.stringify(fp)]);
+    }
   });
+}
+
+/** Entities and their columns, as a short string: changes whenever an update adds a record type or field. */
+export function schemaFingerprint(): string {
+  return ENTITIES.map((e) => `${e}:${Object.keys(ENTITY_FIELDS[e]).join(",")}`).join("|");
 }
 
 /* ------------------------------------------------------------------ */

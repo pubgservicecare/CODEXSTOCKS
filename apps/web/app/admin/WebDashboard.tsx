@@ -2,15 +2,14 @@
 
 import { useMemo } from "react";
 import { Link } from "react-router-dom";
-import { computeConsolidated, convertUsdPkr, CURRENCIES, formatMoney } from "@codex/shared";
+import { computeConsolidated, convertUsdPkr, CURRENCIES, formatMoney, formatUsdtPkr, pkrToUsdt, receiptMoney } from "@codex/shared";
 import {
   Activity,
-  ConsolidatedCard,
-  FxRateLine,
+  FinanceTiles,
   Icon,
   Loading,
-  MoneyCard,
   MonthlyChart,
+  NetProfitCard,
   Notice,
   Row,
   SyncCard,
@@ -34,7 +33,7 @@ export function WebDashboard() {
 
 function Board({ data }: { data: Data }) {
   const { svc } = useApp();
-  const { quote } = useFx();
+  const { quote, usdt } = useFx();
   const combined = useMemo(() => computeConsolidated(data.flow), [data.flow]);
   const { counts, byCurrency } = data.report;
   const missing = CURRENCIES.reduce((a, c) => a + byCurrency[c].missingRates, 0);
@@ -68,14 +67,17 @@ function Board({ data }: { data: Data }) {
           <div className="wd-actions">
             <Link className="btn primary" to="/accounts/new"><Icon name="plus" size={16} /> New account</Link>
             <Link className="btn" to="/accounts"><Icon name="accounts" size={16} /> Inventory</Link>
-            <Link className="btn ghost" to="/sales"><Icon name="sales" size={16} /> Sales</Link>
+            <Link className="btn ghost" to="/payments"><Icon name="wallet" size={16} /> Payments</Link>
           </div>
         </div>
         <div className="wd-profit" data-testid="web-combined-profit">
-          <span className="wd-profit-k">Combined net profit</span>
-          <b className={combined.netProfit < 0 ? "neg" : undefined}>{formatMoney(combined.netProfit, "PKR")}</b>
-          <span className="wd-profit-usd">{usd(combined.netProfit) ? `≈ ${usd(combined.netProfit)} at the current reference rate` : "No USD/PKR reference rate available"}</span>
-          <span className="wd-profit-note">PKR and USD together, each transaction at its own recorded rate.{quote ? <> <FxRateLine quote={quote} /></> : null}</span>
+          <span className="wd-profit-k">Net profit</span>
+          <b className={combined.netProfit < 0 ? "neg" : undefined}>{receiptMoney(combined.netProfit, "PKR")}</b>
+          <span className="wd-profit-usd">{usdt ? `≈ ${receiptMoney(pkrToUsdt(combined.netProfit, usdt.usdt_pkr_micro), "USDT")}` : "USDT equivalent unavailable (no USDT rate yet)"}</span>
+          <span className="wd-profit-note">
+            One profit for every sale, cost and expense — the PKR figure and its USDT equivalent, never added together.
+            {usdt ? <> {formatUsdtPkr(usdt.usdt_pkr_micro)} · {usdt.manual ? "your rate" : "Powered by CoinGecko"}</> : null}
+          </span>
         </div>
         <span className="art-note">Illustrative artwork</span>
       </section>
@@ -100,12 +102,12 @@ function Board({ data }: { data: Data }) {
       <div className="wd-flow">
         <MonthlyChart flow={data.flow} />
         <div className="wd-native">
-          {CURRENCIES.map((c) => <MoneyCard key={c} c={c} r={byCurrency[c]} />)}
+          <FinanceTiles flow={data.flow} />
         </div>
       </div>
 
       <div className="wd-trio">
-        <ConsolidatedCard flow={data.flow} />
+        <NetProfitCard flow={data.flow} />
         <div className="card">
           <div className="card-head">
             <span className="icon-tile gold"><Icon name="layers" size={16} /></span>

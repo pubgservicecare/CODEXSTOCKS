@@ -13,7 +13,7 @@ export function adminHosts(env: string | undefined): string[] {
   return extra.length ? extra : DEFAULT_ADMIN_HOSTS;
 }
 
-const PASSTHROUGH = /^\/(api\/|_next\/|favicon\.ico$|robots\.txt$|icon\.svg$)/;
+const PASSTHROUGH = /^\/(api\/|_next\/|favicon\.ico$|robots\.txt$|sitemap\.xml$|icon\.svg$)/;
 
 export function decideRoute(hostHeader: string | null, pathname: string, admins: string[]): RouteDecision {
   const host = (hostHeader ?? "").toLowerCase().replace(/:\d+$/, "");

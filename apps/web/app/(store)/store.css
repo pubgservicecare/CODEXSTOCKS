@@ -2728,3 +2728,58 @@ html.js [data-reveal].is-in {
     display: none;
   }
 }
+
+/* ---------- share an account ---------- */
+.detail-buy {
+  display: grid;
+  gap: 10px;
+}
+.share {
+  position: relative;
+}
+.detail-buy .share .btn {
+  width: 100%;
+}
+.share-menu {
+  position: absolute;
+  z-index: 60;
+  left: 0;
+  right: 0;
+  top: calc(100% + 8px);
+  display: grid;
+  padding: 6px;
+  background: #0d0d10;
+  border: 1px solid var(--line-2);
+  box-shadow: 0 18px 40px -12px rgba(0, 0, 0, 0.8);
+  clip-path: polygon(0 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 12px 100%, 0 calc(100% - 12px));
+}
+.share-menu a,
+.share-menu button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 0 12px;
+  color: var(--text);
+  background: none;
+  border: 0;
+  font: 600 14px/1 var(--font-hud, inherit);
+  letter-spacing: 0.04em;
+  text-decoration: none;
+  text-align: left;
+  cursor: pointer;
+}
+.share-menu a:hover,
+.share-menu button:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+.share--compact .btn span {
+  display: none;
+}
+.share--compact .share-menu {
+  left: auto;
+  right: 0;
+  top: auto;
+  bottom: calc(100% + 10px);
+  width: 210px;
+}

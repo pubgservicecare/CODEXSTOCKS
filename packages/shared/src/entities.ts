@@ -1,8 +1,9 @@
 import { z } from "zod";
-import { CURRENCIES, MAX_MINOR } from "./money";
+import { CURRENCIES, MAX_MINOR, PAY_CURRENCIES } from "./money";
 import { UUID_RE } from "./ids";
 import { EMAIL_RE, PHONE_RE, youtubeId } from "./text";
 import { FX_MAX_MICRO, FX_MIN_MICRO, FX_SOURCE_MANUAL } from "./fx";
+import { EXTRA_ENDS, FINE_MODES, MAX_INSTALLMENTS, validatePlan, type Allocation, type ScheduleItem } from "./installments";
 
 /* ------------------------------------------------------------------ */
 /* Enumerations                                                        */
@@ -33,6 +34,32 @@ export type CodeState = (typeof CODE_STATES)[number];
 export const SALE_STATUSES = ["completed", "refunded", "voided"] as const;
 export type SaleStatus = (typeof SALE_STATUSES)[number];
 export const SALE_CHANNELS = ["whatsapp", "website", "direct", "other"] as const;
+export const PLAN_STATUSES = ["active", "cancelled"] as const;
+export const SCHEDULE_MODES = ["auto", "manual"] as const;
+export const PAY_METHODS = ["cash", "bank", "jazzcash", "easypaisa", "usdt", "card", "other"] as const;
+export type PayMethod = (typeof PAY_METHODS)[number];
+export const PAY_METHOD_LABELS: Record<PayMethod, string> = {
+  cash: "Cash",
+  bank: "Bank transfer",
+  jazzcash: "JazzCash",
+  easypaisa: "Easypaisa",
+  usdt: "USDT (crypto)",
+  card: "Card",
+  other: "Other",
+};
+export const PAYMENT_TARGETS = ["plan", "debt"] as const;
+/** advance / installment / settlement belong to plans; receive / pay to money owed to or by the owner. */
+export const PAYMENT_KINDS = ["advance", "installment", "settlement", "receive", "pay"] as const;
+export type PaymentKind = (typeof PAYMENT_KINDS)[number];
+export const PAYMENT_STATUSES = ["recorded", "reversed"] as const;
+export const DEBT_DIRECTIONS = ["receive", "pay"] as const;
+export type DebtDirection = (typeof DEBT_DIRECTIONS)[number];
+export const DEBT_STATUSES = ["open", "cancelled"] as const;
+export const RECEIPT_KINDS = ["plan", "payment"] as const;
+export type ReceiptKind = (typeof RECEIPT_KINDS)[number];
+/** "PP-261103-7F3A2C" (payment plan), "PR-..." (payment received), "PM-..." (money to receive / to pay). */
+export const RECEIPT_NO_RE = /^(PP|PR|PM)-\d{6}-[0-9A-F]{6}$/;
+
 export const EXPENSE_CATEGORIES = [
   "advertising",
   "hosting_software",
@@ -57,6 +84,7 @@ export const dateSchema = z
   .regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD")
   .refine((s) => !Number.isNaN(Date.parse(s)), "Invalid date");
 export const currencySchema = z.enum(CURRENCIES);
+export const payCurrencySchema = z.enum(PAY_CURRENCIES);
 export const minorSchema = z.number().int("Amount must be whole minor units").min(0).max(MAX_MINOR);
 export const optText = (max: number) => z.string().max(max).nullable();
 export const phoneSchema = z.string().max(30).regex(PHONE_RE, "Enter a valid phone number (digits, optional +)");
@@ -135,6 +163,11 @@ export const accountSchema = z
     purchase_fx_micro: fxMicro,
     purchase_fx_source: fxText(100),
     purchase_fx_at: fxText(40),
+    /** Public URL name (codexstocks.org/accounts/<slug>). Assigned by the server; clients never choose it. */
+    slug: z.string().max(120).regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "Invalid slug").nullable().default(null),
+    /** Optional search-result title / description overrides (sensible defaults are generated). */
+    seo_title: z.string().max(120).nullable().default(null),
+    seo_description: z.string().max(320).nullable().default(null),
   })
   .superRefine((a, ctx) => {
     checkFx(ctx, a.purchase_fx_micro, a.purchase_fx_source, a.purchase_fx_at, "purchase_fx_micro");
@@ -296,7 +329,24 @@ export const auditEventSchema = z.object({
 });
 export type AuditEvent = z.infer<typeof auditEventSchema>;
 
-export const SETTING_KEYS = ["store_name", "public_whatsapp", "default_currency", "store_tagline"] as const;
+export const SETTING_KEYS = [
+  "store_name",
+  "public_whatsapp",
+  "default_currency",
+  "store_tagline",
+  // Admin contact information printed on receipts (public business details only).
+  "contact_owner",
+  "contact_phone",
+  "contact_email",
+  "contact_website",
+  "contact_address",
+  "contact_hours",
+  "contact_social",
+  "contact_other",
+  // USDT/PKR: "provider" (reference rate) or "manual" (the owner's own rate, JSON in usdt_pkr_manual).
+  "usdt_rate_mode",
+  "usdt_pkr_manual",
+] as const;
 export type SettingKey = (typeof SETTING_KEYS)[number];
 export const settingSchema = z.object({
   ...meta,
@@ -306,8 +356,233 @@ export const settingSchema = z.object({
 export type Setting = z.infer<typeof settingSchema>;
 
 /* ------------------------------------------------------------------ */
+/* Installment plans, payments, money owed, receipts                   */
+/* ------------------------------------------------------------------ */
+
+function parseJsonArray<T>(text: string): T[] | null {
+  try {
+    const v = JSON.parse(text) as unknown;
+    return Array.isArray(v) ? (v as T[]) : null;
+  } catch {
+    return null;
+  }
+}
+
+export const scheduleItemSchema = z.object({ n: z.number().int().min(1).max(MAX_INSTALLMENTS), due_on: dateSchema, principal_minor: minorSchema });
+export const fineWaiverSchema = z.object({
+  id: idSchema,
+  n: z.number().int().min(1).max(MAX_INSTALLMENTS),
+  minor: minorSchema.refine((v) => v > 0, "Waiver must be greater than zero"),
+  reason: z.string().max(1000),
+  at: isoSchema,
+  actor: z.string().max(100),
+  undone_at: isoSchema.nullable(),
+  undo_reason: z.string().max(1000).nullable(),
+});
+export type FineWaiverRecord = z.infer<typeof fineWaiverSchema>;
+export const allocationSchema = z.object({
+  n: z.number().int().min(0).max(MAX_INSTALLMENTS),
+  part: z.enum(["principal", "extra", "fine", "credit", "charge"]),
+  minor: minorSchema.refine((v) => v > 0, "Allocations must be greater than zero"),
+});
+export const debtChargeSchema = z.object({
+  id: idSchema,
+  kind: z.enum(["charge", "discount"]),
+  minor: minorSchema.refine((v) => v > 0, "Amount must be greater than zero"),
+  label: z.string().max(200),
+  on: dateSchema,
+  at: isoSchema,
+});
+export type DebtCharge = z.infer<typeof debtChargeSchema>;
+
+/**
+ * An installment sale agreement. The account's sale itself is an ordinary sales row (counted once, at the
+ * original price); the plan tracks what is still owed. Daily Extra and late fines are derived from these terms.
+ */
+export const installmentPlanSchema = z
+  .object({
+    ...meta,
+    account_id: idSchema,
+    sale_id: idSchema,
+    customer_name: z.string().max(200).refine((s) => s.trim().length > 0, "Customer name is required"),
+    customer_phone: optText(40),
+    customer_whatsapp: optText(40),
+    account_title: z.string().max(200),
+    account_ref: optText(100),
+    currency: currencySchema,
+    original_minor: minorSchema,
+    advance_minor: minorSchema,
+    advance_due_on: dateSchema.nullable(),
+    start_on: dateSchema,
+    duration_months: z.number().int().min(1).max(120).nullable(),
+    duration_days: z.number().int().min(1).max(3660).nullable(),
+    schedule_mode: z.enum(SCHEDULE_MODES),
+    interval_days: z.number().int().min(1).max(366).nullable(),
+    first_due_on: dateSchema,
+    schedule_json: z.string().max(20000),
+    extra_rate_minor: minorSchema,
+    extra_free_days: z.number().int().min(0).max(3660),
+    extra_end: z.enum(EXTRA_ENDS),
+    extra_end_on: dateSchema.nullable(),
+    extra_days: z.number().int().min(1).max(3660).nullable(),
+    fine_minor: minorSchema,
+    fine_mode: z.enum(FINE_MODES),
+    fine_grace_days: z.number().int().min(0).max(365),
+    payment_notes: z.string().max(4000),
+    agreement_ref: optText(200),
+    agreement_notes: z.string().max(4000),
+    status: z.enum(PLAN_STATUSES),
+    cancelled_on: dateSchema.nullable(),
+    cancel_reason: optText(1000),
+    revision: z.number().int().min(0),
+    waivers_json: z.string().max(20000),
+  })
+  .superRefine((p, ctx) => {
+    const sched = parseJsonArray<ScheduleItem>(p.schedule_json);
+    const items = sched ? z.array(scheduleItemSchema).safeParse(sched) : null;
+    if (!items?.success) {
+      ctx.addIssue({ code: "custom", path: ["schedule_json"], message: "Invalid installment schedule" });
+      return;
+    }
+    const waivers = parseJsonArray(p.waivers_json);
+    if (!waivers || !z.array(fineWaiverSchema).safeParse(waivers).success)
+      ctx.addIssue({ code: "custom", path: ["waivers_json"], message: "Invalid fine waivers" });
+    try {
+      validatePlan(planTerms(p), items.data);
+    } catch (e) {
+      ctx.addIssue({ code: "custom", path: ["schedule_json"], message: (e as Error).message });
+    }
+    if (p.status === "cancelled" && (!p.cancelled_on || !(p.cancel_reason ?? "").trim()))
+      ctx.addIssue({ code: "custom", path: ["cancel_reason"], message: "A cancelled plan needs a date and a reason" });
+  });
+export type InstallmentPlan = z.infer<typeof installmentPlanSchema>;
+
+export function planTerms(
+  p: Pick<
+    InstallmentPlan,
+    "original_minor" | "advance_minor" | "start_on" | "extra_rate_minor" | "extra_free_days" | "extra_end" | "extra_end_on" | "extra_days" | "fine_minor" | "fine_mode" | "fine_grace_days"
+  >,
+) {
+  return {
+    original_minor: p.original_minor,
+    advance_minor: p.advance_minor,
+    start_on: p.start_on,
+    extra_rate_minor: p.extra_rate_minor,
+    extra_free_days: p.extra_free_days,
+    extra_end: p.extra_end,
+    extra_end_on: p.extra_end_on,
+    extra_days: p.extra_days,
+    fine_minor: p.fine_minor,
+    fine_mode: p.fine_mode,
+    fine_grace_days: p.fine_grace_days,
+  };
+}
+
+/**
+ * Money actually received (plan payments, money owed to the owner) or paid out (money the owner owes).
+ * Never edited after saving: a mistake is corrected by REVERSING the payment (kept, with a reason).
+ */
+export const paymentSchema = z
+  .object({
+    ...meta,
+    receipt_no: z.string().regex(RECEIPT_NO_RE, "Invalid receipt number"),
+    target: z.enum(PAYMENT_TARGETS),
+    plan_id: idSchema.nullable(),
+    debt_id: idSchema.nullable(),
+    kind: z.enum(PAYMENT_KINDS),
+    installment_no: z.number().int().min(0).max(MAX_INSTALLMENTS).nullable(),
+    paid_on: dateSchema,
+    amount_minor: minorSchema.refine((v) => v > 0, "Amount must be greater than zero"),
+    currency: payCurrencySchema,
+    /** Amount credited to the plan / record in ITS currency. */
+    credited_minor: minorSchema.refine((v) => v > 0, "Amount must be greater than zero"),
+    /** Plan/record currency units per 1 unit of the payment currency, x1e6 (null when the same currency). */
+    rate_micro: z.number().int().positive().max(1e15).nullable(),
+    rate_source: optText(100),
+    rate_at: optText(40),
+    /** PKR per 1 unit of the payment currency at payment time, x1e6 (null for PKR): used for PKR reports. */
+    pkr_micro: z.number().int().positive().max(1e15).nullable(),
+    pkr_source: optText(100),
+    pkr_at: optText(40),
+    method: z.enum(PAY_METHODS),
+    reference: optText(200),
+    notes: optText(2000),
+    allocations_json: z.string().max(20000),
+    actor: z.string().max(100),
+    status: z.enum(PAYMENT_STATUSES),
+    reversed_at: isoSchema.nullable(),
+    reversal_reason: optText(1000),
+  })
+  .superRefine((p, ctx) => {
+    if (p.target === "plan" && (!p.plan_id || p.debt_id)) ctx.addIssue({ code: "custom", path: ["plan_id"], message: "A plan payment needs its plan" });
+    if (p.target === "debt" && (!p.debt_id || p.plan_id)) ctx.addIssue({ code: "custom", path: ["debt_id"], message: "This payment needs its record" });
+    const planKind = p.kind === "advance" || p.kind === "installment" || p.kind === "settlement";
+    if ((p.target === "plan") !== planKind) ctx.addIssue({ code: "custom", path: ["kind"], message: "Payment type does not match" });
+    const allocs = parseJsonArray<Allocation>(p.allocations_json);
+    const parsed = allocs ? z.array(allocationSchema).safeParse(allocs) : null;
+    if (!parsed?.success) ctx.addIssue({ code: "custom", path: ["allocations_json"], message: "Invalid allocation" });
+    else {
+      const parts = new Set(parsed.data.map((a) => a.part));
+      if (p.target === "plan" && parts.has("charge")) ctx.addIssue({ code: "custom", path: ["allocations_json"], message: "Invalid allocation" });
+      if (p.target === "debt" && (parts.has("extra") || parts.has("fine"))) ctx.addIssue({ code: "custom", path: ["allocations_json"], message: "Invalid allocation" });
+      if (parsed.data.reduce((a, x) => a + x.minor, 0) !== p.credited_minor)
+        ctx.addIssue({ code: "custom", path: ["allocations_json"], message: "The allocation must add up to the amount credited" });
+    }
+    if ((p.rate_micro === null) !== (p.rate_source === null)) ctx.addIssue({ code: "custom", path: ["rate_source"], message: "Record where the conversion rate came from" });
+    if (p.rate_micro === null && p.amount_minor !== p.credited_minor)
+      ctx.addIssue({ code: "custom", path: ["credited_minor"], message: "A conversion rate is needed when the credited amount differs" });
+    if (p.currency === "PKR" && p.pkr_micro !== null) ctx.addIssue({ code: "custom", path: ["pkr_micro"], message: "PKR needs no PKR rate" });
+    if ((p.pkr_micro === null) !== (p.pkr_source === null)) ctx.addIssue({ code: "custom", path: ["pkr_source"], message: "Record where the PKR rate came from" });
+    if (p.status === "reversed" && (!p.reversed_at || !(p.reversal_reason ?? "").trim()))
+      ctx.addIssue({ code: "custom", path: ["reversal_reason"], message: "A reversed payment needs a reason" });
+  });
+export type Payment = z.infer<typeof paymentSchema>;
+
+/** Money to Receive (owed TO the owner) / Money to Pay (owed BY the owner) — personal or business, not sales. */
+export const debtSchema = z
+  .object({
+    ...meta,
+    direction: z.enum(DEBT_DIRECTIONS),
+    party_name: z.string().max(200).refine((s) => s.trim().length > 0, "Name is required"),
+    party_contact: optText(100),
+    description: z.string().max(2000),
+    original_minor: minorSchema.refine((v) => v > 0, "Amount must be greater than zero"),
+    currency: payCurrencySchema,
+    txn_on: dateSchema,
+    due_on: dateSchema.nullable(),
+    notes: z.string().max(4000),
+    charges_json: z.string().max(20000),
+    status: z.enum(DEBT_STATUSES),
+    cancelled_at: isoSchema.nullable(),
+    cancel_reason: optText(1000),
+  })
+  .superRefine((d, ctx) => {
+    const charges = parseJsonArray(d.charges_json);
+    if (!charges || !z.array(debtChargeSchema).safeParse(charges).success)
+      ctx.addIssue({ code: "custom", path: ["charges_json"], message: "Invalid charges" });
+    if (d.due_on && d.due_on < d.txn_on) ctx.addIssue({ code: "custom", path: ["due_on"], message: "The due date cannot be before the transaction date" });
+    if (d.status === "cancelled" && (!d.cancelled_at || !(d.cancel_reason ?? "").trim()))
+      ctx.addIssue({ code: "custom", path: ["cancel_reason"], message: "A cancelled record needs a reason" });
+  });
+export type Debt = z.infer<typeof debtSchema>;
+
+/** An issued receipt: an immutable snapshot of exactly what was shown, re-rendered as PNG on demand. */
+export const receiptSchema = z.object({
+  ...meta,
+  receipt_no: z.string().regex(RECEIPT_NO_RE, "Invalid receipt number"),
+  kind: z.enum(RECEIPT_KINDS),
+  plan_id: idSchema.nullable(),
+  payment_id: idSchema.nullable(),
+  issued_at: isoSchema,
+  revision: z.number().int().min(0).nullable(),
+  data_json: z.string().max(100_000),
+});
+export type Receipt = z.infer<typeof receiptSchema>;
+
+/* ------------------------------------------------------------------ */
 /* Registry                                                            */
 /* ------------------------------------------------------------------ */
+
 
 export const ENTITIES = [
   "accounts",
@@ -320,6 +595,10 @@ export const ENTITIES = [
   "expenses",
   "audit_events",
   "settings",
+  "installment_plans",
+  "payments",
+  "debts",
+  "receipts",
 ] as const;
 export type Entity = (typeof ENTITIES)[number];
 
@@ -334,6 +613,10 @@ export interface EntityRowMap {
   expenses: Expense;
   audit_events: AuditEvent;
   settings: Setting;
+  installment_plans: InstallmentPlan;
+  payments: Payment;
+  debts: Debt;
+  receipts: Receipt;
 }
 export type AnyRow = EntityRowMap[Entity];
 
@@ -348,6 +631,10 @@ export const ENTITY_SCHEMAS: { [E in Entity]: z.ZodType<EntityRowMap[E]> } = {
   expenses: expenseSchema,
   audit_events: auditEventSchema,
   settings: settingSchema,
+  installment_plans: installmentPlanSchema,
+  payments: paymentSchema,
+  debts: debtSchema,
+  receipts: receiptSchema,
 };
 
 export type FieldType = "text" | "int" | "bool";
@@ -361,6 +648,7 @@ export const ENTITY_FIELDS: { [E in Entity]: Record<keyof EntityRowMap[E] & stri
     description_public: "text", youtube_url: "text", image_url: "text", image_file_id: "text",
     old_owner_name: "text", old_owner_whatsapp: "text", show_old_owner_public: "bool", internal_notes: "text",
     purchase_fx_micro: "int", purchase_fx_source: "text", purchase_fx_at: "text",
+    slug: "text", seo_title: "text", seo_description: "text",
   },
   login_links: {
     id: "text", rev: "int", deleted: "bool", created_at: "text", updated_at: "text",
@@ -405,6 +693,35 @@ export const ENTITY_FIELDS: { [E in Entity]: Record<keyof EntityRowMap[E] & stri
   },
   settings: {
     id: "text", rev: "int", deleted: "bool", created_at: "text", updated_at: "text", key: "text", value: "text",
+  },
+  installment_plans: {
+    id: "text", rev: "int", deleted: "bool", created_at: "text", updated_at: "text",
+    account_id: "text", sale_id: "text", customer_name: "text", customer_phone: "text", customer_whatsapp: "text",
+    account_title: "text", account_ref: "text", currency: "text", original_minor: "int", advance_minor: "int",
+    advance_due_on: "text", start_on: "text", duration_months: "int", duration_days: "int", schedule_mode: "text",
+    interval_days: "int", first_due_on: "text", schedule_json: "text", extra_rate_minor: "int", extra_free_days: "int",
+    extra_end: "text", extra_end_on: "text", extra_days: "int", fine_minor: "int", fine_mode: "text",
+    fine_grace_days: "int", payment_notes: "text", agreement_ref: "text", agreement_notes: "text", status: "text",
+    cancelled_on: "text", cancel_reason: "text", revision: "int", waivers_json: "text",
+  },
+  payments: {
+    id: "text", rev: "int", deleted: "bool", created_at: "text", updated_at: "text",
+    receipt_no: "text", target: "text", plan_id: "text", debt_id: "text", kind: "text", installment_no: "int",
+    paid_on: "text", amount_minor: "int", currency: "text", credited_minor: "int", rate_micro: "int",
+    rate_source: "text", rate_at: "text", pkr_micro: "int", pkr_source: "text", pkr_at: "text", method: "text",
+    reference: "text", notes: "text", allocations_json: "text", actor: "text", status: "text",
+    reversed_at: "text", reversal_reason: "text",
+  },
+  debts: {
+    id: "text", rev: "int", deleted: "bool", created_at: "text", updated_at: "text",
+    direction: "text", party_name: "text", party_contact: "text", description: "text", original_minor: "int",
+    currency: "text", txn_on: "text", due_on: "text", notes: "text", charges_json: "text", status: "text",
+    cancelled_at: "text", cancel_reason: "text",
+  },
+  receipts: {
+    id: "text", rev: "int", deleted: "bool", created_at: "text", updated_at: "text",
+    receipt_no: "text", kind: "text", plan_id: "text", payment_id: "text", issued_at: "text", revision: "int",
+    data_json: "text",
   },
 };
 

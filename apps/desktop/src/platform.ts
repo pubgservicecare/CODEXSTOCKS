@@ -46,6 +46,23 @@ export async function saveBackupFile(contents: string): Promise<string | null> {
   return path;
 }
 
+/** Receipt images: the owner picks where to save; only .png files can be written. */
+export async function savePngFile(fileName: string, bytes: Uint8Array): Promise<string | null> {
+  const path = await save({
+    title: "Save receipt image",
+    defaultPath: fileName,
+    filters: [{ name: "PNG image", extensions: ["png"] }],
+  });
+  if (!path) return null;
+  await invoke("png_save", bytes, { headers: { "x-path": encodeURIComponent(path) } });
+  return path;
+}
+
+/** WhatsApp chats and the store website open in the default browser (only these https hosts are allowed). */
+export async function openExternalUrl(url: string): Promise<void> {
+  await invoke("open_url", { url });
+}
+
 export async function openBackupFile(): Promise<string | null> {
   const path = await open({
     title: "Choose backup to restore",

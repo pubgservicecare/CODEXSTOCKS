@@ -73,6 +73,32 @@ export function AccountDetail() {
   );
 }
 
+const SITE = "https://codexstocks.org";
+
+/** Installment plan of a sold account, and the public page link of a live one (readable slug). */
+function PlanAndLink({ accountId, slug, live }: { accountId: string; slug: string | null; live: boolean }) {
+  const { svc, toast } = useApp();
+  const { data: plans } = useLoad(() => svc.list("installment_plans", { account_id: accountId }).catch(() => []), [accountId]);
+  const plan = plans?.find((p) => !p.deleted);
+  const url = slug ? `${SITE}/accounts/${slug}` : null;
+  if (!plan && !(live && url)) return null;
+  return (
+    <div className="row small" style={{ gap: 8, marginTop: 12, flexWrap: "wrap" }}>
+      {plan && (
+        <Link className="badge info-link" to={`/payments/plans/${plan.id}`}>
+          <Icon name="calendar" size={12} /> Installment plan · {plan.customer_name}
+        </Link>
+      )}
+      {live && url && (
+        <span className="public-link">
+          <Icon name="globe" size={12} /> <span className="mono">{url.replace("https://", "")}</span>
+          <button className="btn ghost sm" onClick={() => navigator.clipboard?.writeText(url).then(() => toast("Link copied"))}><Icon name="copy" size={13} /> Copy</button>
+        </span>
+      )}
+    </div>
+  );
+}
+
 function Header({ b, reload }: { b: AccountBundle; reload: () => void }) {
   const { svc } = useApp();
   const nav = useNavigate();
@@ -106,6 +132,7 @@ function Header({ b, reload }: { b: AccountBundle; reload: () => void }) {
             <div><small>Logins · codes</small><b>{b.links.length}/4 · {unusedCodes} unused</b></div>
           </div>
           {a.status === "sold" && <SoldSummary b={b} />}
+          <PlanAndLink accountId={a.id} slug={a.slug} live={a.published && a.status === "available"} />
           <div className="btn-group" style={{ marginTop: 20 }}>
             {canMarkSold(a) && <button className="btn primary mark-sold" onClick={() => setSelling(true)}><Icon name="sales" size={15} /> Mark as Sold</button>}
             <Link className={`btn ${canMarkSold(a) ? "" : "primary"}`} to={`/accounts/${a.id}/edit`}><Icon name="edit" size={15} /> Edit</Link>

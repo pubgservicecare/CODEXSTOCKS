@@ -15,6 +15,9 @@ import { DevicesPage } from "./pages/Devices";
 import { SettingsPage } from "./pages/Settings";
 import { BackupPage } from "./pages/Backup";
 import { HistoryPage } from "./pages/History";
+import { PaymentsPage } from "./pages/Payments";
+import { PlanDetail } from "./pages/PlanDetail";
+import { PlanForm } from "./pages/PlanForm";
 import { FxProvider } from "./fx-ui";
 
 export function Brand({ sub }: { sub?: string }) {
@@ -132,7 +135,7 @@ export function SyncBadge({ s }: { s: SyncSummary | null }) {
 
 export const NAV: { group: string; items: [string, string, IconName][] }[] = [
   { group: "Inventory", items: [["/", "Dashboard", "dashboard"], ["/accounts", "Accounts", "accounts"]] },
-  { group: "Money", items: [["/sales", "Sales & refunds", "sales"], ["/expenses", "Expenses", "expenses"]] },
+  { group: "Money", items: [["/payments", "Payments", "wallet"], ["/sales", "Sales & refunds", "sales"], ["/expenses", "Expenses", "expenses"]] },
   { group: "Records", items: [["/history", "History", "history"], ["/sync", "Sync & conflicts", "sync"]] },
   { group: "System", items: [["/devices", "Devices", "devices"], ["/settings", "Settings", "settings"], ["/backup", "Backup", "backup"]] },
 ];
@@ -161,7 +164,7 @@ export function useTableLabels(root: React.RefObject<HTMLElement | null>) {
   }, [root]);
 }
 
-export const TABS: [string, string, IconName][] = [["/", "Home", "dashboard"], ["/accounts", "Accounts", "accounts"], ["/accounts/new", "New", "plus"], ["/sales", "Sales", "sales"]];
+export const TABS: [string, string, IconName][] = [["/", "Home", "dashboard"], ["/accounts", "Accounts", "accounts"], ["/accounts/new", "New", "plus"], ["/payments", "Payments", "wallet"]];
 
 /** Optional presentation overrides (the admin website passes its own shell and dashboard; the desktop app passes none). */
 export interface AdminPresentation {
@@ -308,6 +311,10 @@ export function AdminApp({ svc, router = "hash", basename, presentation }: { svc
             <Route path="/accounts/new" element={<AccountForm />} />
             <Route path="/accounts/:id" element={<AccountDetail />} />
             <Route path="/accounts/:id/edit" element={<AccountForm />} />
+            <Route path="/payments" element={<PaymentsPage />} />
+            <Route path="/payments/new/:accountId" element={<PlanForm />} />
+            <Route path="/payments/plans/:id" element={<PlanDetail />} />
+            <Route path="/payments/:tab" element={<PaymentsPage />} />
             <Route path="/sales" element={<SalesPage />} />
             <Route path="/expenses" element={<ExpensesPage />} />
             <Route path="/sync" element={<SyncPage />} />

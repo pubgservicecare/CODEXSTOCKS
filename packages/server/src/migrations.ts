@@ -261,6 +261,130 @@ CREATE TABLE IF NOT EXISTS fx_rates (
 );
 `,
   },
+  {
+    // Additive only: installment plans, payments, money to receive / to pay, issued receipts, readable
+    // account URLs (slug + history) with SEO overrides, and a USDT/PKR row in the rate cache. No existing
+    // row or column is changed or removed; the only constraint change WIDENS the rate-cache pair check.
+    id: "0003_payments_slugs",
+    sql: `
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS slug text;
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS seo_title text;
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS seo_description text;
+CREATE UNIQUE INDEX IF NOT EXISTS accounts_slug_unique ON accounts(slug) WHERE slug IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS account_slugs (
+  slug text PRIMARY KEY,
+  account_id uuid NOT NULL REFERENCES accounts(id),
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS account_slugs_account_idx ON account_slugs(account_id);
+
+CREATE TABLE IF NOT EXISTS installment_plans (${meta},
+  account_id uuid NOT NULL REFERENCES accounts(id),
+  sale_id uuid NOT NULL REFERENCES sales(id),
+  customer_name text NOT NULL CHECK (length(btrim(customer_name)) > 0),
+  customer_phone text,
+  customer_whatsapp text,
+  account_title text NOT NULL,
+  account_ref text,
+  ${cur("currency")},
+  original_minor bigint NOT NULL CHECK (original_minor > 0),
+  advance_minor bigint NOT NULL CHECK (advance_minor >= 0),
+  advance_due_on date,
+  start_on date NOT NULL,
+  duration_months integer,
+  duration_days integer,
+  schedule_mode text NOT NULL CHECK (schedule_mode IN ('auto','manual')),
+  interval_days integer,
+  first_due_on date NOT NULL,
+  schedule_json text NOT NULL,
+  extra_rate_minor bigint NOT NULL CHECK (extra_rate_minor >= 0),
+  extra_free_days integer NOT NULL CHECK (extra_free_days >= 0),
+  extra_end text NOT NULL CHECK (extra_end IN ('final_due','date','days','paid')),
+  extra_end_on date,
+  extra_days integer,
+  fine_minor bigint NOT NULL CHECK (fine_minor >= 0),
+  fine_mode text NOT NULL CHECK (fine_mode IN ('flat','per_day')),
+  fine_grace_days integer NOT NULL CHECK (fine_grace_days >= 0),
+  payment_notes text NOT NULL DEFAULT '',
+  agreement_ref text,
+  agreement_notes text NOT NULL DEFAULT '',
+  status text NOT NULL CHECK (status IN ('active','cancelled')),
+  cancelled_on date,
+  cancel_reason text,
+  revision integer NOT NULL DEFAULT 0 CHECK (revision >= 0),
+  waivers_json text NOT NULL DEFAULT '[]'
+);
+CREATE INDEX IF NOT EXISTS installment_plans_seq_idx ON installment_plans(change_seq);
+CREATE INDEX IF NOT EXISTS installment_plans_account_idx ON installment_plans(account_id);
+CREATE UNIQUE INDEX IF NOT EXISTS installment_plans_one_per_sale ON installment_plans(sale_id) WHERE NOT deleted;
+
+CREATE TABLE IF NOT EXISTS debts (${meta},
+  direction text NOT NULL CHECK (direction IN ('receive','pay')),
+  party_name text NOT NULL CHECK (length(btrim(party_name)) > 0),
+  party_contact text,
+  description text NOT NULL DEFAULT '',
+  original_minor bigint NOT NULL CHECK (original_minor > 0),
+  currency text NOT NULL CHECK (currency IN ('PKR','USD','USDT')),
+  txn_on date NOT NULL,
+  due_on date,
+  notes text NOT NULL DEFAULT '',
+  charges_json text NOT NULL DEFAULT '[]',
+  status text NOT NULL CHECK (status IN ('open','cancelled')),
+  cancelled_at timestamptz,
+  cancel_reason text
+);
+CREATE INDEX IF NOT EXISTS debts_seq_idx ON debts(change_seq);
+
+CREATE TABLE IF NOT EXISTS payments (${meta},
+  receipt_no text NOT NULL,
+  target text NOT NULL CHECK (target IN ('plan','debt')),
+  plan_id uuid REFERENCES installment_plans(id),
+  debt_id uuid REFERENCES debts(id),
+  kind text NOT NULL CHECK (kind IN ('advance','installment','settlement','receive','pay')),
+  installment_no integer,
+  paid_on date NOT NULL,
+  amount_minor bigint NOT NULL CHECK (amount_minor > 0),
+  currency text NOT NULL CHECK (currency IN ('PKR','USD','USDT')),
+  credited_minor bigint NOT NULL CHECK (credited_minor > 0),
+  rate_micro bigint CHECK (rate_micro > 0),
+  rate_source text,
+  rate_at text,
+  pkr_micro bigint CHECK (pkr_micro > 0),
+  pkr_source text,
+  pkr_at text,
+  method text NOT NULL,
+  reference text,
+  notes text,
+  allocations_json text NOT NULL,
+  actor text NOT NULL,
+  status text NOT NULL CHECK (status IN ('recorded','reversed')),
+  reversed_at timestamptz,
+  reversal_reason text,
+  CHECK ((target = 'plan' AND plan_id IS NOT NULL AND debt_id IS NULL) OR (target = 'debt' AND debt_id IS NOT NULL AND plan_id IS NULL))
+);
+CREATE INDEX IF NOT EXISTS payments_seq_idx ON payments(change_seq);
+CREATE INDEX IF NOT EXISTS payments_plan_idx ON payments(plan_id);
+CREATE INDEX IF NOT EXISTS payments_debt_idx ON payments(debt_id);
+CREATE UNIQUE INDEX IF NOT EXISTS payments_receipt_no_unique ON payments(receipt_no);
+
+CREATE TABLE IF NOT EXISTS receipts (${meta},
+  receipt_no text NOT NULL,
+  kind text NOT NULL CHECK (kind IN ('plan','payment')),
+  plan_id uuid REFERENCES installment_plans(id),
+  payment_id uuid REFERENCES payments(id),
+  issued_at timestamptz NOT NULL,
+  revision integer,
+  data_json text NOT NULL
+);
+CREATE INDEX IF NOT EXISTS receipts_seq_idx ON receipts(change_seq);
+CREATE INDEX IF NOT EXISTS receipts_plan_idx ON receipts(plan_id);
+CREATE UNIQUE INDEX IF NOT EXISTS receipts_receipt_no_unique ON receipts(receipt_no);
+
+ALTER TABLE fx_rates DROP CONSTRAINT IF EXISTS fx_rates_pair_check;
+ALTER TABLE fx_rates ADD CONSTRAINT fx_rates_pair_check CHECK (pair IN ('USD/PKR','USDT/PKR'));
+`,
+  },
 ];
 
 async function checksum(s: string): Promise<string> {

@@ -720,3 +720,108 @@ td.row-actions { text-align: right; white-space: nowrap; }
   .sold-box { grid-template-columns: 1fr; }
 }
 @keyframes cx-sheet { from { transform: translateY(24px); opacity: 0.6; } to { transform: none; opacity: 1; } }
+
+/* =========================================================================================
+   Payments: installment plans, money to receive / pay, receipts (same tokens as the rest)
+   ========================================================================================= */
+.fin-grid .stat .value { font-size: 19px; letter-spacing: -0.015em; overflow-wrap: anywhere; }
+.fin-stat.tone-bad { border-color: rgba(242, 85, 90, 0.35); }
+.fin-stat.tone-bad .value { color: #ff8a8e; }
+.amount-list { font-variant-numeric: tabular-nums; }
+.tabs button .n.bad-n { background: var(--bad-soft); color: #ff8a8e; }
+.fin-filters { margin-bottom: 14px; }
+.fin-filters .search { flex: 1 1 260px; }
+.fin-filters select { width: auto; min-width: 140px; }
+.fin-filters input[type="date"] { width: 160px; }
+.fin-table td { font-variant-numeric: tabular-nums; }
+.fin-table tr.reversed td { opacity: 0.55; text-decoration: line-through; text-decoration-color: rgba(255, 255, 255, 0.25); }
+.fin-table tr.reversed td:last-child, .fin-table tr.reversed td:nth-last-child(2) { text-decoration: none; }
+.fin-table tr.overdue td:first-child { box-shadow: inset 3px 0 0 var(--bad); }
+.fin-table tr.changed td { background: rgba(242, 179, 71, 0.07); }
+.fin-table tfoot td { border-bottom: none; background: var(--panel-2); }
+.fin-table s { color: var(--faint); }
+.maaf { color: var(--ok); font-weight: 650; }
+h3.fin-sub { font-size: 13px; margin: 18px 0 8px; color: var(--muted); font-weight: 650; letter-spacing: 0.01em; }
+.plain-list { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; }
+.plain-list li { overflow-wrap: anywhere; }
+.link-btn { background: none; border: 0; padding: 0; color: var(--accent-2, var(--accent)); font: inherit; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; }
+.link-btn:hover { text-decoration: underline; }
+.reverse-inline { display: inline-flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.reverse-inline input { height: 30px; width: 150px; }
+.card.inset { background: var(--bg-2); box-shadow: none; margin: 4px 0 12px; }
+.danger-text { color: #ff8a8e; }
+.crumbs { color: var(--faint); margin-bottom: 4px; }
+.crumbs a { color: var(--muted); }
+.cx-page-head h1 .badge { vertical-align: middle; margin-left: 6px; font-size: 12px; }
+
+/* Mark as Sold: Instant Pay or Installments */
+.pay-type-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.pay-type { display: grid; gap: 8px; justify-items: start; text-align: left; padding: 16px; border-radius: var(--radius); background: var(--bg-2); border: 1px solid var(--line-2); color: var(--text); font: inherit; cursor: pointer; transition: border-color 0.15s, background 0.15s; }
+.pay-type:hover, .pay-type:focus-visible { border-color: var(--accent); background: var(--panel-2); }
+.pay-type b { font-size: 15px; }
+@media (max-width: 560px) { .pay-type-grid { grid-template-columns: 1fr; } }
+
+/* Plan form */
+.plan-form { display: grid; gap: 14px; }
+.form-card > h2 { margin: 0 0 12px; font-size: 16px; }
+.input-row { display: flex; gap: 8px; align-items: center; }
+.input-row > input, .input-row > select { flex: 1; min-width: 0; }
+.manual-rows { display: grid; gap: 8px; margin-bottom: 12px; }
+.manual-row { display: grid; grid-template-columns: 90px minmax(0, 1fr) minmax(0, 1fr) auto; gap: 8px; align-items: center; }
+.manual-row .n { color: var(--muted); font-size: 12.5px; font-weight: 600; }
+.plan-totals { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; margin-top: 12px; }
+.plan-totals > div { display: grid; gap: 2px; padding: 10px 12px; border-radius: var(--radius-sm); background: var(--bg-2); border: 1px solid var(--line); min-width: 0; }
+.plan-totals span { color: var(--faint); font-size: 11.5px; }
+.plan-totals b { font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.plan-totals .grand { background: var(--accent-soft); border-color: rgba(242, 179, 71, 0.3); }
+.plan-totals .grand b { color: var(--accent-2, var(--accent)); }
+.seo-box { margin-top: 6px; padding: 10px 14px; border: 1px dashed var(--line-2); border-radius: var(--radius-sm); }
+.seo-box > summary { cursor: pointer; color: var(--muted); font-weight: 600; font-size: 13px; }
+.public-link { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); flex-wrap: wrap; }
+.badge.info-link { color: var(--info); background: var(--info-soft); text-decoration: none; }
+
+/* Payment allocation */
+.alloc-box { margin: 4px 0 12px; padding: 12px 14px; border-radius: var(--radius-sm); background: var(--bg-2); border: 1px solid var(--line); }
+.alloc-list { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 6px; }
+.alloc-list li { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; font-variant-numeric: tabular-nums; }
+.alloc-list li.credit { color: var(--warn); }
+.alloc-manual { display: grid; gap: 8px; margin-top: 8px; }
+.alloc-manual label { display: grid; grid-template-columns: minmax(0, 1fr) 140px; gap: 10px; align-items: center; font-size: 13px; }
+
+/* Dashboard: one net profit + compact money tiles */
+.net-profit .figure-sub { color: var(--muted); font-size: 15px; font-weight: 560; margin-top: 2px; font-variant-numeric: tabular-nums; }
+.money-row .v.neg { color: #ff8a8e; }
+.fin-tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; align-content: start; }
+.fin-tile { display: grid; gap: 3px; padding: 12px 14px; border-radius: var(--radius); background: var(--panel); border: 1px solid var(--line); color: var(--text); text-decoration: none; min-width: 0; box-shadow: var(--shadow-sm); transition: border-color 0.15s; }
+.fin-tile:hover { border-color: var(--line-3); }
+.fin-tile .label { color: var(--muted); font-size: 12px; font-weight: 560; }
+.fin-tile .value { font-size: 16px; font-weight: 650; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.fin-tile .sub { color: var(--faint); font-size: 11.5px; overflow-wrap: anywhere; }
+.fin-tile.tone-bad { border-color: rgba(242, 85, 90, 0.35); }
+.fin-tile.tone-bad .value { color: #ff8a8e; }
+
+/* Receipts */
+.receipt-head { display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+.receipt-preview { max-height: 62vh; overflow: auto; border-radius: var(--radius-sm); background: #e9edf5; padding: 10px; text-align: center; }
+.receipt-preview img { max-width: 100%; height: auto; box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35); }
+.receipt-actions { justify-content: flex-start; }
+.receipt-note { margin: 10px 0 0; }
+.receipt-print { display: none; }
+@media print {
+  body > *:not(.receipt-print) { display: none !important; }
+  .receipt-print { display: block !important; }
+  .receipt-print img { width: 100%; height: auto; }
+}
+
+@media (max-width: 1100px) { .plan-totals { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 860px) {
+  .fin-filters select, .fin-filters input[type="date"] { flex: 1 1 140px; width: auto; }
+  .manual-row { grid-template-columns: 1fr 1fr auto; }
+  .manual-row .n { grid-column: 1 / -1; }
+  .plan-totals { grid-template-columns: 1fr 1fr; }
+  .plan-totals .grand { grid-column: 1 / -1; }
+  .fin-tiles { grid-template-columns: 1fr 1fr; }
+  .alloc-manual label { grid-template-columns: 1fr; }
+  .reverse-inline input { width: 100%; }
+  .receipt-actions .btn { flex: 1 1 45%; }
+}

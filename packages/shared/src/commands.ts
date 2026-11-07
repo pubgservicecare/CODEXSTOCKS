@@ -17,6 +17,23 @@ import {
   SETTING_KEYS,
 } from "./entities";
 import {
+  addDebtCharge,
+  cancelDebt,
+  cancelPlan,
+  createInstallmentSale,
+  issuePlanReceipt,
+  recordDebtPayment,
+  recordPlanPayment,
+  reversePayment,
+  revisePlan,
+  saveDebt,
+  setUsdtRate,
+  undoFineWaiver,
+  updatePlanInfo,
+  updatePlanTerms,
+  waiveFine,
+} from "./finance-commands";
+import {
   assertCodeTransition,
   assertManualTransition,
   checkInvariants,
@@ -48,12 +65,12 @@ function pick<T extends object>(src: Record<string, unknown>, keys: readonly (ke
   return out as Patch<T>;
 }
 
-function metaFor(store: EntityStore, id?: string) {
+export function metaFor(store: EntityStore, id?: string) {
   const t = store.now();
   return { id: id ?? store.newId(), rev: 0, deleted: false, created_at: t, updated_at: t };
 }
 
-async function write<E extends Entity>(
+export async function write<E extends Entity>(
   store: EntityStore,
   entity: E,
   next: unknown,
@@ -64,18 +81,18 @@ async function write<E extends Entity>(
   return store.put(entity, row, prev);
 }
 
-async function load<E extends Entity>(store: EntityStore, entity: E, id: string, what: string): Promise<EntityRowMap[E]> {
+export async function load<E extends Entity>(store: EntityStore, entity: E, id: string, what: string): Promise<EntityRowMap[E]> {
   const row = await store.get(entity, id);
   if (!row || row.deleted) throw new RuleError("not_found", `${what} not found`);
   return row;
 }
 
-function checkRev(prev: AnyRow, expected?: number) {
+export function checkRev(prev: AnyRow, expected?: number) {
   if (expected !== undefined && prev.rev !== expected)
     throw new ConflictError("This record was changed elsewhere. Reload to see the latest version.", prev);
 }
 
-async function audit(
+export async function audit(
   store: EntityStore,
   entity_type: Entity,
   entity_id: string,
@@ -99,6 +116,7 @@ export const ACCOUNT_EDITABLE = [
   "title", "purchase_cost_minor", "purchase_currency", "purchased_at", "purchase_reference", "list_price_minor",
   "list_currency", "description_public", "youtube_url", "old_owner_name", "old_owner_whatsapp",
   "show_old_owner_public", "internal_notes", "purchase_fx_micro", "purchase_fx_source", "purchase_fx_at",
+  "seo_title", "seo_description",
 ] as const satisfies readonly (keyof Account)[];
 export type AccountInput = Patch<Pick<Account, (typeof ACCOUNT_EDITABLE)[number]>>;
 
@@ -128,6 +146,9 @@ function newAccountRow(store: EntityStore, id: string | undefined, input: Accoun
     purchase_fx_micro: null,
     purchase_fx_source: null,
     purchase_fx_at: null,
+    slug: null,
+    seo_title: null,
+    seo_description: null,
     ...pick<Account>(input as Record<string, unknown>, ACCOUNT_EDITABLE),
   };
 }
@@ -596,6 +617,16 @@ export const SETTING_IDS: Record<SettingKey, string> = {
   public_whatsapp: "00000000-0000-7000-8000-000000000002",
   default_currency: "00000000-0000-7000-8000-000000000003",
   store_tagline: "00000000-0000-7000-8000-000000000004",
+  contact_owner: "00000000-0000-7000-8000-000000000005",
+  contact_phone: "00000000-0000-7000-8000-000000000006",
+  contact_email: "00000000-0000-7000-8000-000000000007",
+  contact_website: "00000000-0000-7000-8000-000000000008",
+  contact_address: "00000000-0000-7000-8000-000000000009",
+  contact_hours: "00000000-0000-7000-8000-00000000000a",
+  contact_social: "00000000-0000-7000-8000-00000000000b",
+  contact_other: "00000000-0000-7000-8000-00000000000c",
+  usdt_rate_mode: "00000000-0000-7000-8000-00000000000d",
+  usdt_pkr_manual: "00000000-0000-7000-8000-00000000000e",
 };
 
 export async function saveSetting(store: EntityStore, args: { key: SettingKey; value: string }) {
@@ -632,6 +663,21 @@ export const COMMANDS = {
   saveExpense,
   deleteExpense,
   saveSetting,
+  createInstallmentSale,
+  recordPlanPayment,
+  reversePayment,
+  revisePlan,
+  updatePlanInfo,
+  updatePlanTerms,
+  waiveFine,
+  undoFineWaiver,
+  cancelPlan,
+  issuePlanReceipt,
+  saveDebt,
+  addDebtCharge,
+  recordDebtPayment,
+  cancelDebt,
+  setUsdtRate,
 } as const;
 export type CommandName = keyof typeof COMMANDS;
 export type CommandArgs<N extends CommandName> = Parameters<(typeof COMMANDS)[N]>[1];

@@ -75,6 +75,22 @@ describe("USD/PKR rate service", () => {
     expect(await getUsdPkrQuote(s.db, { fetchImpl: p.fetch, now: T0, fx: { disabled: true } })).toBeNull();
   });
 
+  it("two simultaneous first requests both get the rate (the second waits for the first's provider call)", async () => {
+    const s = await startServer();
+    const p = provider(276.6);
+    const slow = (async (input: RequestInfo | URL) => {
+      await new Promise((r) => setTimeout(r, 400));
+      return p.fetch(input);
+    }) as typeof fetch;
+    const [a, b] = await Promise.all([
+      getUsdPkrQuote(s.db, { fetchImpl: slow, now: T0, fx: {} }),
+      getUsdPkrQuote(s.db, { fetchImpl: slow, now: T0, fx: {} }),
+    ]);
+    expect(p.calls).toBe(1);
+    expect(a?.usd_pkr_micro).toBe(276_600_000);
+    expect(b?.usd_pkr_micro).toBe(276_600_000);
+  });
+
   it("rejects invalid provider data", async () => {
     const bad: Record<string, unknown>[] = [
       { result: "error", "error-type": "unsupported-code" },

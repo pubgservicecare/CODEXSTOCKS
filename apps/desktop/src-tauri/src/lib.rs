@@ -162,6 +162,63 @@ async fn backup_read(path: String) -> Result<String, String> {
     fs::read_to_string(p).map_err(|e| e.to_string())
 }
 
+fn percent_decode(s: &str) -> Result<String, String> {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'%' && i + 2 < b.len() {
+            let hex = std::str::from_utf8(&b[i + 1..i + 3]).map_err(|_| "bad path")?;
+            out.push(u8::from_str_radix(hex, 16).map_err(|_| "bad path")?);
+            i += 3;
+        } else {
+            out.push(b[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8(out).map_err(|_| "bad path".into())
+}
+
+/// Receipt images chosen in the native save dialog. Only .png files, at most 25 MB.
+#[tauri::command]
+async fn png_save(request: Request<'_>) -> Result<(), String> {
+    let raw = request
+        .headers()
+        .get("x-path")
+        .and_then(|v| v.to_str().ok())
+        .ok_or("missing path")?;
+    let p = PathBuf::from(percent_decode(raw)?);
+    match p.extension().and_then(|e| e.to_str()) {
+        Some(ext) if ext.eq_ignore_ascii_case("png") => {}
+        _ => return Err("Receipt images must use the .png extension".into()),
+    }
+    let tauri::ipc::InvokeBody::Raw(data) = request.body() else {
+        return Err("expected raw bytes".into());
+    };
+    if data.len() > 25 * 1024 * 1024 || data.len() < 8 || &data[..8] != b"\x89PNG\r\n\x1a\n" {
+        return Err("not a PNG image".into());
+    }
+    let tmp = p.with_extension("png.part");
+    fs::write(&tmp, data).map_err(|e| e.to_string())?;
+    fs::rename(&tmp, &p).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Opens an allowed https link (WhatsApp chat, the store website) in the default browser.
+/// Runs rundll32's URL handler directly (no shell), so the address is never interpreted as a command.
+#[tauri::command]
+async fn open_url(url: String) -> Result<(), String> {
+    const ALLOWED: [&str; 4] = ["https://wa.me/", "https://api.whatsapp.com/", "https://codexstocks.org/", "https://www.youtube.com/"];
+    if url.len() > 4000 || !ALLOWED.iter().any(|p| url.starts_with(p)) || url.chars().any(|c| c.is_control() || c == '"') {
+        return Err("This link cannot be opened".into());
+    }
+    std::process::Command::new("rundll32")
+        .args(["url.dll,FileProtocolHandler", &url])
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 #[derive(serde::Serialize)]
 struct AppInfo {
     device_name: String,
@@ -212,6 +269,8 @@ pub fn run() {
             media_remove,
             backup_save,
             backup_read,
+            png_save,
+            open_url,
             app_info
         ])
         .run(tauri::generate_context!())

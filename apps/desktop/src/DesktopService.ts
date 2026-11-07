@@ -1,6 +1,6 @@
 import type { AppCore } from "@codex/local-core";
 import type { DataService } from "@codex/ui";
-import { openBackupFile, saveBackupFile } from "./platform";
+import { openBackupFile, openExternalUrl, saveBackupFile, savePngFile } from "./platform";
 
 /** DataService for the desktop: everything goes through the offline-first local core. */
 export function desktopService(core: AppCore, getUsername: () => string | null): DataService {
@@ -22,6 +22,9 @@ export function desktopService(core: AppCore, getUsername: () => string | null):
     },
 
     fx: () => core.fxQuote(),
+    fxUsdt: () => core.usdtQuote(),
+    savePng: async (fileName, bytes) => !!(await savePngFile(fileName, bytes)),
+    openExternal: (url) => openExternalUrl(url),
 
     vaultUnlocked: () => core.vaultUnlocked,
     hasVault: async () => (await core.state()).hasVault,

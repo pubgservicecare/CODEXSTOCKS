@@ -1,4 +1,4 @@
-import { FX_PAIR, fxStatus, usdPkrMicroFromNumber, type FxQuote } from "@codex/shared";
+import { FX_PAIR, fxStatus, USDT_PAIR, usdPkrMicroFromNumber, usdtPkrMicroFromNumber, type FxQuote, type UsdtQuote } from "@codex/shared";
 import type { Db } from "./db";
 
 /**
@@ -57,6 +57,19 @@ async function readRow(db: Db): Promise<Row | null> {
     last_attempt_at: iso(x.last_attempt_at),
     last_error: (x.last_error as string) ?? null,
   };
+}
+
+/**
+ * Another request claimed the provider call while no rate is stored yet: wait (up to ~10 s) for that call to
+ * finish instead of answering "no rate" — the admin would otherwise keep showing no rate until its next refresh.
+ */
+async function awaitInFlight<T>(read: () => Promise<T>, settled: (r: T) => boolean, tries = 40, ms = 250): Promise<T> {
+  let r = await read();
+  for (let i = 0; i < tries && !settled(r); i++) {
+    await new Promise((res) => setTimeout(res, ms));
+    r = await read();
+  }
+  return r;
 }
 
 function toQuote(row: Row, now: Date): FxQuote | null {
@@ -134,6 +147,8 @@ export async function getUsdPkrQuote(db: Db, opts: { fetchImpl?: typeof fetch; n
         await db.query("UPDATE fx_rates SET last_error = $2 WHERE pair = $1", [FX_PAIR, msg.slice(0, 300)]);
       }
       row = await readRow(db);
+    } else if (!row?.rate_micro) {
+      row = await awaitInFlight(() => readRow(db), (r) => !!r?.rate_micro || !!r?.last_error);
     }
   }
   return row ? toQuote(row, now) : null;
@@ -149,5 +164,120 @@ export function fxConfigFromEnv(env: Record<string, string | undefined>): FxConf
     refreshMinutes: n(env.FX_REFRESH_MINUTES, 360, 60),
     retryMinutes: n(env.FX_RETRY_MINUTES, 30, 5),
     disabled: env.FX_DISABLED === "1",
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* USDT/PKR reference rate                                             */
+/* ------------------------------------------------------------------ */
+
+/**
+ * USDT (Tether) price in PKR from CoinGecko's simple-price endpoint, cached in fx_rates (pair USDT/PKR) and
+ * refreshed at most every USDT_FX_REFRESH_MINUTES (default 60; CoinGecko asks for cached data to be refreshed
+ * at least every 24 hours). Its terms require the credit "Powered by CoinGecko" wherever the rate is shown.
+ * Without COINGECKO_API_KEY the keyless public endpoint is used; with a key, the Demo or Pro endpoint.
+ * Like the USD/PKR rate, a failed fetch never replaces a good value and no value is ever invented.
+ */
+export interface UsdtFxConfig {
+  apiKey?: string;
+  plan?: "demo" | "pro";
+  refreshMinutes?: number;
+  retryMinutes?: number;
+  timeoutMs?: number;
+  disabled?: boolean;
+}
+
+export const USDT_SOURCE_NAME = "CoinGecko";
+export const USDT_SOURCE_URL = "https://www.coingecko.com";
+
+function usdtUrl(cfg: UsdtFxConfig): { url: string; headers: Record<string, string> } {
+  const q = "/api/v3/simple/price?ids=tether&vs_currencies=pkr&include_last_updated_at=true";
+  if (cfg.apiKey && cfg.plan === "pro") return { url: `https://pro-api.coingecko.com${q}`, headers: { "x-cg-pro-api-key": cfg.apiKey } };
+  if (cfg.apiKey) return { url: `https://api.coingecko.com${q}`, headers: { "x-cg-demo-api-key": cfg.apiKey } };
+  return { url: `https://api.coingecko.com${q}`, headers: {} };
+}
+
+export async function fetchUsdtQuote(fetchImpl: typeof fetch, cfg: UsdtFxConfig, now: Date) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), cfg.timeoutMs ?? 6000);
+  let body: Record<string, unknown>;
+  try {
+    const { url, headers } = usdtUrl(cfg);
+    const res = await fetchImpl(url, { signal: ctrl.signal, headers: { Accept: "application/json", ...headers } });
+    if (!res.ok) throw new Error(`USDT rate provider answered HTTP ${res.status}`);
+    body = (await res.json()) as Record<string, unknown>;
+  } finally {
+    clearTimeout(timer);
+  }
+  const t = body.tether as Record<string, unknown> | undefined;
+  const micro = usdtPkrMicroFromNumber(t?.pkr);
+  const ts = typeof t?.last_updated_at === "number" && t.last_updated_at > 0 ? new Date(t.last_updated_at * 1000).toISOString() : null;
+  if (ts && Date.parse(ts) > now.getTime() + 3_600_000) throw new Error("USDT rate provider timestamp is in the future");
+  return { rate_micro: micro, effective_at: ts };
+}
+
+export async function getUsdtPkrQuote(
+  db: Db,
+  opts: { fetchImpl?: typeof fetch; now?: Date; usdt?: UsdtFxConfig; log?: (m: string) => void } = {},
+): Promise<UsdtQuote | null> {
+  const now = opts.now ?? new Date();
+  const cfg = opts.usdt ?? {};
+  const read = async () => (await db.query<Record<string, unknown>>("SELECT * FROM fx_rates WHERE pair = $1", [USDT_PAIR])).rows[0] ?? null;
+  const iso = (v: unknown) => (v instanceof Date ? v.toISOString() : typeof v === "string" ? new Date(v).toISOString() : null);
+  let row = await read();
+  const age = (t: unknown) => (iso(t) ? now.getTime() - Date.parse(iso(t)!) : Infinity);
+  const due = !cfg.disabled && age(row?.retrieved_at) > (cfg.refreshMinutes ?? 60) * 60_000 && age(row?.last_attempt_at) > (cfg.retryMinutes ?? 30) * 60_000;
+  if (due) {
+    const claim = await db.query(
+      `INSERT INTO fx_rates (pair, last_attempt_at) VALUES ($1, $2)
+       ON CONFLICT (pair) DO UPDATE SET last_attempt_at = EXCLUDED.last_attempt_at
+       WHERE fx_rates.last_attempt_at IS NULL OR fx_rates.last_attempt_at < $3`,
+      [USDT_PAIR, now.toISOString(), new Date(now.getTime() - (cfg.retryMinutes ?? 30) * 60_000).toISOString()],
+    );
+    if (claim.rowCount) {
+      try {
+        const q = await fetchUsdtQuote(opts.fetchImpl ?? fetch, cfg, now);
+        await db.query(
+          `UPDATE fx_rates SET rate_micro = $2, source = $3, source_url = $4, frequency = 'live', effective_at = $5,
+             next_update_at = NULL, retrieved_at = $6, last_error = NULL WHERE pair = $1`,
+          [USDT_PAIR, q.rate_micro, USDT_SOURCE_NAME, USDT_SOURCE_URL, q.effective_at ?? now.toISOString(), now.toISOString()],
+        );
+      } catch (e) {
+        const msg = (e as Error)?.name === "AbortError" ? "USDT rate provider timed out" : ((e as Error)?.message ?? "USDT rate provider failed");
+        opts.log?.(`fx: ${msg}`);
+        await db.query("UPDATE fx_rates SET last_error = $2 WHERE pair = $1", [USDT_PAIR, msg.slice(0, 300)]);
+      }
+      row = await read();
+    } else if (row?.rate_micro === null || row?.rate_micro === undefined) {
+      row = await awaitInFlight(read, (r) => (r?.rate_micro !== null && r?.rate_micro !== undefined) || !!r?.last_error);
+    }
+  }
+  if (!row || row.rate_micro === null || row.rate_micro === undefined || !iso(row.retrieved_at)) return null;
+  const q: UsdtQuote = {
+    pair: USDT_PAIR,
+    usdt_pkr_micro: Number(row.rate_micro),
+    source: (row.source as string) ?? USDT_SOURCE_NAME,
+    source_url: (row.source_url as string) ?? USDT_SOURCE_URL,
+    effective_at: iso(row.effective_at),
+    retrieved_at: iso(row.retrieved_at)!,
+    frequency: "live",
+    status: "fresh",
+    manual: false,
+  };
+  q.status = fxStatus(q, now);
+  return q;
+}
+
+export function usdtConfigFromEnv(env: Record<string, string | undefined>): UsdtFxConfig {
+  const n = (v: string | undefined, d: number, min: number) => {
+    const x = Number(v);
+    return Number.isFinite(x) && x >= min ? x : d;
+  };
+  return {
+    apiKey: env.COINGECKO_API_KEY || undefined,
+    plan: env.COINGECKO_PLAN === "pro" ? "pro" : "demo",
+    refreshMinutes: Math.min(n(env.USDT_FX_REFRESH_MINUTES, 60, 10), 1440),
+    retryMinutes: n(env.USDT_FX_RETRY_MINUTES, 30, 5),
+    disabled: env.USDT_FX_DISABLED === "1",
   };
 }

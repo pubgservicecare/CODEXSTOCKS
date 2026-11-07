@@ -159,7 +159,7 @@ describe("consolidated (PKR-equivalent) books", () => {
     expect(c.purchases).toBe(1_500_000 + 1_400_000 + 2_256_000 + 900_000 + 1_000_000);
     expect(c.outgoing).toBe(c.purchases + c.expenses + c.refunds);
     expect(c.inventoryValue).toBe(2_256_000 + 900_000 + 1_000_000);
-    expect(c.excluded).toEqual({ sales: 0, refunds: 0, costs: 0, purchases: 0, expenses: 0 });
+    expect(c.excluded).toEqual({ sales: 0, refunds: 0, costs: 0, purchases: 0, expenses: 0, payments: 0 });
 
     // Native per-currency report is unchanged: still separate PKR and USD numbers, never added together.
     const native = computeReport(input);
@@ -196,7 +196,7 @@ describe("PKR and USD dashboard charts", () => {
 
   it("both charts come from the same series and rise and fall identically, month by month", () => {
     const { buckets, excluded } = consolidatedMonthlyFlow(mixed(), MONTHS);
-    expect(excluded).toEqual({ sales: 0, refunds: 0, costs: 0, purchases: 0, expenses: 0 });
+    expect(excluded).toEqual({ sales: 0, refunds: 0, costs: 0, purchases: 0, expenses: 0, payments: 0 });
     // the series really contains both currencies' activity
     expect(buckets.find((b) => b.key === "2026-07")!.in).toBe(1_995_000); // the USD sale, at its own rate
     expect(buckets.find((b) => b.key === "2026-10")!.out).toBe(283_000); // the USD expense, at its own rate

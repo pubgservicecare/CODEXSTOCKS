@@ -28,7 +28,10 @@ import {
   computeReport,
   fxStatus,
   isValidUsdPkrMicro,
+  isValidUsdtPkrMicro,
+  localDate,
   type FxQuote,
+  type UsdtQuote,
   ENTITIES,
   ENTITY_SCHEMAS,
   firstIssue,
@@ -225,6 +228,22 @@ export class AppCore {
     }
     const cached = await kvGet<FxQuote>(this.db, "fx");
     return cached && isValidUsdPkrMicro(cached.usd_pkr_micro) ? { ...cached, status: fxStatus(cached, this.now()) } : null;
+  }
+
+  /** USDT/PKR reference quote (CoinGecko via the server), remembered for offline use like the USD/PKR one. */
+  async usdtQuote(): Promise<UsdtQuote | null> {
+    const base = this.cloud?.api_base ?? (await this.prefs()).api_base;
+    try {
+      const { usdt } = await this.client(base).fx();
+      if (usdt && isValidUsdtPkrMicro(usdt.usdt_pkr_micro)) {
+        await kvSet(this.db, "fx_usdt", usdt);
+        return { ...usdt, status: fxStatus(usdt, this.now()) };
+      }
+    } catch {
+      /* offline: the remembered quote */
+    }
+    const cached = await kvGet<UsdtQuote>(this.db, "fx_usdt");
+    return cached && isValidUsdtPkrMicro(cached.usdt_pkr_micro) ? { ...cached, status: fxStatus(cached, this.now()) } : null;
   }
 
   async prefs(): Promise<Prefs> {
@@ -726,13 +745,15 @@ export class AppCore {
 
   async dashboard(): Promise<DashboardData> {
     this.requireLogin();
-    const [accounts, sales, refunds, expenses] = await Promise.all([
+    const [accounts, sales, refunds, expenses, plans, payments] = await Promise.all([
       this.list("accounts"),
       this.list("sales"),
       this.list("refunds"),
       this.list("expenses"),
+      this.list("installment_plans"),
+      this.list("payments"),
     ]);
-    return { report: computeReport({ accounts, sales, refunds, expenses }), sync: await this.syncStatus() };
+    return { report: computeReport({ accounts, sales, refunds, expenses, plans, payments, asOf: localDate(this.now()) }), sync: await this.syncStatus() };
   }
 
   /** Audit history: newest events overall, or every event concerning one account (same rule as the server). */

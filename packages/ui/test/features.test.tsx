@@ -2,10 +2,11 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
+import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it } from "vitest";
 import type { Account } from "@codex/shared";
 import { AppCtx } from "../src/components";
-import { canMarkSold, expectedProfit, MarkSoldDialog } from "../src/pages/MarkSold";
+import { canMarkSold, expectedProfit, InstantPayDialog, MarkSoldDialog } from "../src/pages/MarkSold";
 import { ImagePicker, readPickedImage } from "../src/ImagePicker";
 import type { DataService } from "../src/service";
 
@@ -16,7 +17,7 @@ const account = {
   title: "Conqueror S12 — Glacier M416", status: "available", published: true, purchase_cost_minor: 1_500_000, purchase_currency: "PKR",
   purchased_at: null, purchase_reference: null, list_price_minor: 2_500_000, list_currency: "PKR", description_public: "", youtube_url: null,
   image_url: null, image_file_id: null, old_owner_name: null, old_owner_whatsapp: null, show_old_owner_public: false, internal_notes: "",
-  purchase_fx_micro: null, purchase_fx_source: null, purchase_fx_at: null,
+  purchase_fx_micro: null, purchase_fx_source: null, purchase_fx_at: null, slug: null, seo_title: null, seo_description: null,
 } satisfies Account;
 
 const withApp = (el: React.ReactElement) =>
@@ -33,8 +34,15 @@ describe("Mark as Sold", () => {
     expect(canMarkSold({ status: "available", deleted: true })).toBe(false);
   });
 
-  it("asks for the actual amount and never pre-fills the listing price", () => {
-    const html = withApp(<MarkSoldDialog account={account} onClose={() => undefined} />);
+  it("first asks how the customer pays: Instant Pay or Installments", () => {
+    const html = withApp(<MemoryRouter><MarkSoldDialog account={account} onClose={() => undefined} /></MemoryRouter>);
+    expect(html).toContain("Instant Pay");
+    expect(html).toContain("Installments");
+    expect(html).not.toContain("Actual sold amount");
+  });
+
+  it("Instant Pay (unchanged) asks for the actual amount and never pre-fills the listing price", () => {
+    const html = withApp(<InstantPayDialog account={account} onClose={() => undefined} />);
     expect(html).toContain("Actual sold amount");
     expect(html).toMatch(/placeholder="Amount received"[^>]*value=""|value=""[^>]*placeholder="Amount received"/);
     expect(html).not.toContain('value="25000"');

@@ -4,22 +4,35 @@ import {
   formatMoney,
   formatUsdPkr,
   otherCurrency,
+  parseManualUsdtRate,
   parseMoney,
+  resolveUsdtQuote,
   type Currency,
   type FxQuote,
+  type UsdtQuote,
 } from "@codex/shared";
 import type { DataService } from "./service";
 
 interface FxState {
   quote: FxQuote | null;
+  /** USDT/PKR to use: the owner's own rate when chosen in Settings, otherwise the reference rate. */
+  usdt: UsdtQuote | null;
+  /** The reference (provider) USDT quote, whatever the owner chose. */
+  usdtProvider: UsdtQuote | null;
+  usdtMode: "provider" | "manual";
   loaded: boolean;
   reload: () => void;
 }
-const FxCtx = createContext<FxState>({ quote: null, loaded: true, reload: () => undefined });
+const FxCtx = createContext<FxState>({ quote: null, usdt: null, usdtProvider: null, usdtMode: "provider", loaded: true, reload: () => undefined });
 
-/** Loads the USD/PKR quote once per session and every 30 minutes (display conversions only). */
+/**
+ * Loads the USD/PKR and USDT/PKR quotes once per session and every 30 minutes (display conversions only),
+ * and re-reads the owner's USDT rate setting whenever data changes.
+ */
 export function FxProvider({ svc, children, initial }: { svc: DataService; children: ReactNode; initial?: FxQuote | null }) {
   const [quote, setQuote] = useState<FxQuote | null>(initial ?? null);
+  const [usdtProvider, setUsdtProvider] = useState<UsdtQuote | null>(null);
+  const [manual, setManual] = useState<{ mode: string | null; value: string | null }>({ mode: null, value: null });
   const [loaded, setLoaded] = useState(initial !== undefined);
   const [tick, setTick] = useState(0);
   useEffect(() => {
@@ -29,13 +42,37 @@ export function FxProvider({ svc, children, initial }: { svc: DataService; child
       .then((q) => live && setQuote(q))
       .catch(() => undefined)
       .finally(() => live && setLoaded(true));
+    svc
+      .fxUsdt?.()
+      .then((q) => live && setUsdtProvider(q))
+      .catch(() => undefined);
     const t = setInterval(() => setTick((x) => x + 1), 30 * 60_000);
     return () => {
       live = false;
       clearInterval(t);
     };
   }, [svc, tick]);
-  return <FxCtx.Provider value={{ quote, loaded, reload: () => setTick((x) => x + 1) }}>{children}</FxCtx.Provider>;
+  useEffect(() => {
+    let live = true;
+    const read = () =>
+      svc
+        .list("settings")
+        .then((rows) => {
+          if (!live) return;
+          const get = (k: string) => rows.find((r) => r.key === k && !r.deleted)?.value ?? null;
+          setManual({ mode: get("usdt_rate_mode"), value: get("usdt_pkr_manual") });
+        })
+        .catch(() => undefined);
+    void read();
+    const off = svc.subscribe(() => void read());
+    return () => {
+      live = false;
+      off();
+    };
+  }, [svc]);
+  const usdt = resolveUsdtQuote({ provider: usdtProvider, manual: parseManualUsdtRate(manual.value), mode: manual.mode, now: new Date() });
+  const usdtMode = manual.mode === "manual" ? "manual" : "provider";
+  return <FxCtx.Provider value={{ quote, usdt, usdtProvider, usdtMode, loaded, reload: () => setTick((x) => x + 1) }}>{children}</FxCtx.Provider>;
 }
 
 export const useFx = () => useContext(FxCtx);

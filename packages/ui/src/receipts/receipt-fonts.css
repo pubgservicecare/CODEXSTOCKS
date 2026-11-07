@@ -1,0 +1,9 @@
+/* Urdu on receipts: Noto Nastaliq Urdu (SIL OFL 1.1, see assets/fonts/NotoNastaliqUrdu-OFL-LICENSE.txt).
+   Self-hosted, so receipts render correctly offline; the browser downloads it only when a receipt is drawn. */
+@font-face {
+  font-family: "Noto Nastaliq Urdu";
+  src: url("../../assets/fonts/NotoNastaliqUrdu-Variable.ttf") format("truetype");
+  font-weight: 400 700;
+  font-style: normal;
+  font-display: block;
+}

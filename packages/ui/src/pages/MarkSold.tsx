@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   convertMinor,
   convertUsdPkr,
@@ -108,6 +109,44 @@ interface Draft {
  * account sold, unpublishes it and writes the audit event — on the desktop offline too (synced later).
  */
 export function MarkSoldDialog({ account: a, onClose, onSold }: { account: Account; onClose: () => void; onSold?: () => void }) {
+  const [type, setType] = useState<"choose" | "instant">("choose");
+  const nav = useNavigate();
+  if (type === "choose")
+    return (
+      <Modal title="Mark as Sold" icon="sales" onClose={onClose}>
+        <div className="sold-account">
+          <b>{a.title}</b>
+          <span className="small muted">How is the customer paying?</span>
+        </div>
+        <div className="pay-type-grid">
+          <button type="button" className="pay-type" onClick={() => setType("instant")}>
+            <span className="icon-tile gold"><Icon name="check" size={18} /></span>
+            <b>Instant Pay</b>
+            <span className="small muted">Full payment received now. Record the actual amount, review and confirm.</span>
+          </button>
+          <button
+            type="button"
+            className="pay-type"
+            onClick={() => {
+              onClose();
+              nav(`/payments/new/${a.id}`);
+            }}
+          >
+            <span className="icon-tile"><Icon name="calendar" size={18} /></span>
+            <b>Installments</b>
+            <span className="small muted">Advance + scheduled installments, Daily Extra and late fine. You enter the agreement; the customer cannot change it.</span>
+          </button>
+        </div>
+        <div className="modal-actions">
+          <button type="button" className="btn ghost" onClick={onClose}>Cancel</button>
+        </div>
+      </Modal>
+    );
+  return <InstantPayDialog account={a} onClose={onClose} onSold={onSold} />;
+}
+
+/** Instant Pay — the original Mark as Sold flow, unchanged. */
+export function InstantPayDialog({ account: a, onClose, onSold }: { account: Account; onClose: () => void; onSold?: () => void }) {
   const { svc, toast } = useApp();
   // One id per dialog: a repeated or retried submission can never create a second sale.
   const [saleId] = useState(newId);

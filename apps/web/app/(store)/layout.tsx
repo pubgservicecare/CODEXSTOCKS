@@ -31,10 +31,10 @@ export default async function StoreLayout({ children }: { children: React.ReactN
   const wa = whatsappLink(store?.whatsapp ?? null, "Hi CODE X STOCKS, I'd like to ask about your PUBG Mobile accounts.");
   return (
     <html lang="en" className={`${display.variable} ${hud.variable}`} suppressHydrationWarning>
-      <head>
-        <script dangerouslySetInnerHTML={{ __html: INTRO_BOOT }} />
-      </head>
       <body>
+        {/* First thing in <body>, so it still runs before anything is painted. Kept out of a hand-written <head>:
+            with one, React sometimes lost its place while hydrating and re-rendered the page (React error #418). */}
+        <script dangerouslySetInnerHTML={{ __html: INTRO_BOOT }} />
         <a className="skip" href="#main">Skip to content</a>
         <Intro />
         <header className="site-head">

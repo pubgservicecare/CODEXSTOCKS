@@ -7,14 +7,21 @@ import {
   CURRENCIES,
   displayFlow,
   formatMoney,
+  formatUsdtPkr,
+  pkrToUsdt,
   type AuditEvent,
   type Currency,
   type CurrencyReport,
+  type Debt,
   type DisplayBucket,
   type Expense,
+  type InstallmentPlan,
+  type PayCurrency,
+  type Payment,
   type Refund,
   type Sale,
 } from "@codex/shared";
+import { FinanceTiles, NetProfitCard, UsdtRateNote } from "./DashboardFinance";
 import { FxRateLine, useFx } from "../fx-ui";
 import { fmtDate, Loading, Notice, useApp, useLoad } from "../components";
 import { Icon, type IconName } from "../icons";
@@ -77,6 +84,9 @@ export interface Flow {
   refunds: Refund[];
   expenses: Expense[];
   accounts: AccountListItem[];
+  plans?: InstallmentPlan[];
+  payments?: Payment[];
+  debts?: Debt[];
 }
 
 export function lastMonths(n = 6, now = new Date()) {
@@ -87,7 +97,7 @@ export function lastMonths(n = 6, now = new Date()) {
 }
 
 /** One chart of the shared series. Bar heights come from the canonical PKR series, so both charts match exactly. */
-function FlowChart({ title, sub, currency, rows, heights }: { title: string; sub: string; currency: Currency; rows: DisplayBucket[]; heights: { in: number; out: number }[] }) {
+function FlowChart({ title, sub, currency, rows, heights }: { title: string; sub: string; currency: PayCurrency; rows: DisplayBucket[]; heights: { in: number; out: number }[] }) {
   const months = lastMonths(rows.length);
   return (
     <div className="flow-chart" data-testid={`flow-${currency}`}>
@@ -113,19 +123,23 @@ function FlowChart({ title, sub, currency, rows, heights }: { title: string; sub
 
 /**
  * Last six months, ALL currencies together. Every transaction is converted into PKR with the rate
- * recorded on it (one shared series); the PKR and USD charts are both drawn from that series, the USD one
- * scaled by ONE display rate for the whole period — so they always rise and fall together.
+ * recorded on it (one shared series); the PKR and USDT charts are both drawn from that series, the USDT one
+ * scaled by ONE display rate for the whole period — so they always rise and fall together. Installment
+ * sales count as their payments arrive (never also on the sale date).
  */
 export function MonthlyChart({ flow }: { flow: Flow }) {
-  const { quote } = useFx();
+  const { usdt } = useFx();
   const months = useMemo(() => lastMonths(6), []);
   const { buckets, excluded } = useMemo(() => consolidatedMonthlyFlow(flow, months.map((m) => m.key)), [flow, months]);
   const pkr = displayFlow(buckets, "PKR", null)!;
-  const usd = displayFlow(buckets, "USD", quote?.usd_pkr_micro ?? null);
+  const rate = usdt?.usdt_pkr_micro ?? null;
+  const usd: DisplayBucket[] | null = rate
+    ? buckets.map((b) => ({ key: b.key, in: pkrToUsdt(b.in, rate), out: pkrToUsdt(b.out, rate), inExact: (b.in * 1e6) / rate, outExact: (b.out * 1e6) / rate }))
+    : null;
   const max = Math.max(1, ...buckets.flatMap((b) => [b.in, b.out]));
   const heights = buckets.map((b) => ({ in: (b.in / max) * 100, out: (b.out / max) * 100 }));
   const empty = buckets.every((d) => !d.in && !d.out);
-  const left = excluded.sales + excluded.refunds + excluded.purchases + excluded.expenses;
+  const left = excluded.sales + excluded.refunds + excluded.purchases + excluded.expenses + excluded.payments;
   return (
     <div className="card">
       <div className="card-head">
@@ -139,22 +153,22 @@ export function MonthlyChart({ flow }: { flow: Flow }) {
           <div className="flow-pair">
             <FlowChart title="PKR equivalent" sub="at each transaction's recorded rate" currency="PKR" rows={pkr} heights={heights} />
             {usd ? (
-              <FlowChart title="USD equivalent" sub="at the current reference rate" currency="USD" rows={usd} heights={heights} />
+              <FlowChart title="USDT equivalent" sub={usdt?.manual ? "at your USDT rate" : "at the current USDT rate"} currency="USDT" rows={usd} heights={heights} />
             ) : (
-              <div className="flow-chart empty small">No USD/PKR reference rate available, so the USD view cannot be shown.</div>
+              <div className="flow-chart empty small">No USDT rate available, so the USDT view cannot be shown. Set your own USDT rate in Settings.</div>
             )}
           </div>
           <div className="legend">
-            <span><i style={{ background: "var(--accent)" }} />Sales received</span>
+            <span><i style={{ background: "var(--accent)" }} />Money received (sales, installment payments)</span>
             <span><i style={{ background: "rgba(255,255,255,0.3)" }} />Purchases, expenses & refunds</span>
           </div>
           <p className="small faint" style={{ margin: "10px 0 0" }}>
-            Both charts show the same transactions. USD amounts are first converted to PKR at the rate saved with each transaction; the USD chart
-            then uses one rate for the whole period{quote ? <> (<FxRateLine quote={quote} />)</> : null}, so it is an equivalent, not the amounts actually paid in USD.
+            Both charts show the same transactions. USD and USDT amounts are first converted to PKR at the rate saved with each transaction; the
+            USDT chart then uses one rate for the whole period{usdt ? <> (<UsdtRateNote />)</> : null}, so it is an equivalent, not amounts actually paid in USDT.
           </p>
           {left > 0 && (
             <p className="small" style={{ margin: "6px 0 0", color: "var(--warn)" }}>
-              {left} USD record(s) have no saved exchange rate and are not included in these charts (see the native USD figures above).
+              {left} record(s) have no saved exchange rate and are not included in these charts.
             </p>
           )}
         </>
@@ -250,15 +264,18 @@ export function Activity({ events, titles }: { events: AuditEvent[]; titles: Map
 export function useDashboardData() {
   const { svc } = useApp();
   return useLoad(async () => {
-    const [dash, accounts, events, sales, refunds, expenses] = await Promise.all([
+    const [dash, accounts, events, sales, refunds, expenses, plans, payments, debts] = await Promise.all([
       svc.dashboard(),
       svc.listAccounts(),
       svc.audit().catch(() => [] as AuditEvent[]),
       svc.list("sales"),
       svc.list("refunds"),
       svc.list("expenses"),
+      svc.list("installment_plans").catch(() => [] as InstallmentPlan[]),
+      svc.list("payments").catch(() => [] as Payment[]),
+      svc.list("debts").catch(() => [] as Debt[]),
     ]);
-    return { ...dash, accounts, events, flow: { sales, refunds, expenses, accounts } as Flow };
+    return { ...dash, accounts, events, flow: { sales, refunds, expenses, accounts, plans, payments, debts } as Flow };
   }, []);
 }
 
@@ -283,7 +300,7 @@ export function Dashboard() {
           <h1>{greet}{svc.username() ? `, ${svc.username()}` : ""}</h1>
           <p>
             {counts.available} account{counts.available === 1 ? "" : "s"} available · {counts.published} live on codexstocks.org.
-            Native PKR and USD books stay separate; the combined view converts each transaction at its recorded rate.
+            One net profit in PKR with its USDT equivalent; installment collections are never counted as new sales.
           </p>
           <div className="row">
             <Link className="btn primary" to="/accounts/new"><Icon name="plus" size={16} /> New account</Link>
@@ -326,9 +343,9 @@ export function Dashboard() {
         </Notice>
       )}
 
-      <div className="grid grid-3" style={{ marginTop: 16 }}>
-        {CURRENCIES.map((c) => <MoneyCard key={c} c={c} r={byCurrency[c]} />)}
-        <ConsolidatedCard flow={data.flow} />
+      <div className="split" style={{ marginTop: 16 }}>
+        <NetProfitCard flow={data.flow} />
+        <FinanceTiles flow={data.flow} />
       </div>
 
       <div className="split" style={{ marginTop: 16 }}>
@@ -381,6 +398,9 @@ export function Dashboard() {
               <Row label="Cost of accounts sold" r={byCurrency} k="costOfSold" hint="Converted with the rate recorded on each sale" />
               <Row label="Gross profit" r={byCurrency} k="grossProfit" />
               <Row label="Expenses" r={byCurrency} k="expenses" />
+              <Row label="Daily Extra collected" r={byCurrency} k="planExtras" hint="Installment plans, when actually received" />
+              <Row label="Late fines collected" r={byCurrency} k="planFines" />
+              <Row label="Cancelled plans written off" r={byCurrency} k="planWriteOffs" />
               <Row label="Net profit" r={byCurrency} k="netProfit" strong />
             </tbody>
           </table>
@@ -389,7 +409,7 @@ export function Dashboard() {
           <table className="keep-table">
             <thead><tr><th>Cash view</th>{CURRENCIES.map((c) => <th key={c} className="num">{c}</th>)}</tr></thead>
             <tbody>
-              <Row label="Incoming (sales received)" r={byCurrency} k="incoming" />
+              <Row label="Incoming (money received)" r={byCurrency} k="incoming" hint="Instant Pay sales + installment payments actually received" />
               <Row label="Purchases (outgoing)" r={byCurrency} k="purchases" />
               <Row label="Total outgoing" r={byCurrency} k="outgoing" hint="Purchases + expenses + refunds" />
               <Row label="Net cash" r={byCurrency} k="netCash" strong />

@@ -4,6 +4,7 @@ import {
   firstIssue,
   isCommandName,
   isEntity,
+  isSlug,
   isUuid,
   loadAccountBundle,
   MAX_PULL_LIMIT,
@@ -34,8 +35,8 @@ import {
 } from "./auth";
 import type { Db } from "./db";
 import { imagekitAuthParams, imagekitDeleteFile, type ImageKitConfig } from "./imagekit";
-import { PgEntityStore, selectList } from "./store";
-import { getUsdPkrQuote, type FxConfig } from "./fx";
+import { backfillSlugs, PgEntityStore, selectList } from "./store";
+import { getUsdPkrQuote, getUsdtPkrQuote, type FxConfig, type UsdtFxConfig } from "./fx";
 import { applyOp, pullChanges, pushOps } from "./sync";
 
 export interface ApiConfig {
@@ -57,6 +58,8 @@ export interface ApiConfig {
   log?: (msg: string) => void;
   /** USD/PKR reference-rate provider settings (server-side only). */
   fx?: FxConfig;
+  /** USDT/PKR reference-rate provider settings (server-side only). */
+  usdt?: UsdtFxConfig;
 }
 
 export class HttpError extends Error {
@@ -191,7 +194,11 @@ route("GET", "/health", "public", async (c) => {
 /** Latest cached USD/PKR reference rate (daily). Public: it is shown next to prices on the storefront. */
 route("GET", "/fx", "public", async (c) => {
   const quote = await getUsdPkrQuote(c.cfg.db, { fetchImpl: c.cfg.fetchImpl, now: c.now, fx: c.cfg.fx, log: c.cfg.log });
-  return json({ quote }, 200, { "Cache-Control": "public, max-age=300, s-maxage=300", ...c.cors });
+  // USDT/PKR reference (CoinGecko). The owner's own USDT rate is a private setting and is NOT served here.
+  const usdt = await getUsdtPkrQuote(c.cfg.db, { fetchImpl: c.cfg.fetchImpl, now: c.now, usdt: c.cfg.usdt ?? { disabled: true }, log: c.cfg.log }).catch(() => null);
+  // A missing rate must not be cached: the next request may already have one.
+  const cache = quote ? "public, max-age=300, s-maxage=300" : "no-store";
+  return json({ quote, usdt }, 200, { "Cache-Control": cache, ...c.cors });
 });
 
 route("GET", "/auth/status", "public", async (c) => {
@@ -407,7 +414,7 @@ route("GET", "/admin/entities/:entity", "owner", async (c) => {
   const entity = c.params.entity;
   if (!isEntity(entity)) throw new HttpError(404, "not_found", "Unknown entity");
   const where: Record<string, string> = {};
-  for (const k of ["account_id", "set_id", "sale_id", "status", "entity_id"]) {
+  for (const k of ["account_id", "set_id", "sale_id", "status", "entity_id", "plan_id", "debt_id", "payment_id", "direction", "kind"]) {
     const v = c.url.searchParams.get(k);
     if (v !== null) where[k] = v;
   }
@@ -455,13 +462,17 @@ route("POST", "/admin/commands/:name", "owner", async (c) => {
 
 route("GET", "/admin/dashboard", "owner", async (c) => {
   const store = new PgEntityStore(c.cfg.db, "web");
-  const [accounts, sales, refunds, expenses] = await Promise.all([
+  const [accounts, sales, refunds, expenses, plans, payments] = await Promise.all([
     store.list("accounts"),
     store.list("sales"),
     store.list("refunds"),
     store.list("expenses"),
+    store.list("installment_plans"),
+    store.list("payments"),
   ]);
-  return json({ report: computeReport({ accounts, sales, refunds, expenses }), sync: await cloudSyncStatus(c.cfg.db) }, 200, c.cors);
+  const asOf = c.url.searchParams.get("as_of");
+  const report = computeReport({ accounts, sales, refunds, expenses, plans, payments, asOf: asOf && /^\d{4}-\d{2}-\d{2}$/.test(asOf) ? asOf : undefined });
+  return json({ report, sync: await cloudSyncStatus(c.cfg.db) }, 200, c.cors);
 });
 
 export interface CloudSyncStatus {
@@ -560,7 +571,22 @@ route("DELETE", "/media/files/:fileId", "owner", async (c) => {
 /* ------------------------------ public ----------------------------- */
 
 const PUBLIC_COLUMNS =
-  "a.id, a.title, a.list_price_minor, a.list_currency, a.description_public, a.image_url, a.youtube_url, a.old_owner_name, a.show_old_owner_public, a.updated_at";
+  "a.id, a.slug, a.title, a.list_price_minor, a.list_currency, a.description_public, a.image_url, a.youtube_url, a.old_owner_name, a.show_old_owner_public, a.seo_title, a.seo_description, a.updated_at";
+
+// Accounts saved before slugs existed get theirs once per server process (then every write keeps it).
+const g = globalThis as unknown as { __codexSlugs?: WeakMap<Db, Promise<unknown>> };
+function ensureSlugs(db: Db): Promise<unknown> {
+  g.__codexSlugs ??= new WeakMap();
+  let p = g.__codexSlugs.get(db);
+  if (!p) {
+    p = backfillSlugs(db).catch((e) => {
+      g.__codexSlugs?.delete(db);
+      throw e;
+    });
+    g.__codexSlugs.set(db, p);
+  }
+  return p;
+}
 const PUBLIC_WHERE = `NOT a.deleted AND a.published AND a.status = 'available'
   AND EXISTS (SELECT 1 FROM login_links l WHERE l.account_id = a.id AND NOT l.deleted)`;
 
@@ -593,6 +619,7 @@ export async function queryPublicListings(
         ? `${priceKey} DESC NULLS LAST`
         : "a.updated_at DESC";
   const limit = Math.min(opts.limit ?? 200, 500);
+  await ensureSlugs(db);
   const r = await db.query<Parameters<typeof toPublicListing>[0]>(
     `SELECT ${PUBLIC_COLUMNS} FROM accounts a WHERE ${where} ORDER BY ${order} LIMIT ${limit}`,
     params,
@@ -602,11 +629,40 @@ export async function queryPublicListings(
 
 export async function queryPublicListing(db: Db, id: string): Promise<PublicListing | null> {
   if (!isUuid(id)) return null;
+  await ensureSlugs(db);
   const r = await db.query<Parameters<typeof toPublicListing>[0]>(
     `SELECT ${PUBLIC_COLUMNS} FROM accounts a WHERE a.id = $1 AND ${PUBLIC_WHERE}`,
     [id],
   );
   return r.rows[0] ? toPublicListing(r.rows[0]) : null;
+}
+
+/**
+ * Public account page lookup by URL segment: the current slug renders; an OLD slug or the account's id
+ * answers with the current slug to redirect to (permanently). Unpublished, sold or deleted accounts: null.
+ */
+export async function resolvePublicListing(db: Db, key: string): Promise<{ listing: PublicListing } | { redirect: string } | null> {
+  await ensureSlugs(db);
+  if (isUuid(key)) {
+    const l = await queryPublicListing(db, key);
+    return l ? { redirect: l.slug } : null;
+  }
+  if (!isSlug(key)) return null;
+  const r = await db.query<Parameters<typeof toPublicListing>[0]>(`SELECT ${PUBLIC_COLUMNS} FROM accounts a WHERE a.slug = $1 AND ${PUBLIC_WHERE}`, [key]);
+  if (r.rows[0]) return { listing: toPublicListing(r.rows[0]) };
+  const old = await db.query<{ slug: string | null }>(
+    `SELECT a.slug FROM account_slugs s JOIN accounts a ON a.id = s.account_id WHERE s.slug = $1 AND ${PUBLIC_WHERE}`,
+    [key],
+  );
+  const cur = old.rows[0]?.slug;
+  return cur && cur !== key ? { redirect: cur } : null;
+}
+
+/** Published accounts for the XML sitemap: canonical slug + last change. */
+export async function queryPublicSitemap(db: Db): Promise<{ slug: string; updated_at: string }[]> {
+  await ensureSlugs(db);
+  const r = await db.query<{ slug: string; updated_at: string }>(`SELECT a.slug, a.updated_at FROM accounts a WHERE ${PUBLIC_WHERE} AND a.slug IS NOT NULL ORDER BY a.updated_at DESC LIMIT 5000`);
+  return r.rows;
 }
 
 export async function queryPublicSettings(db: Db): Promise<PublicSettings> {
@@ -631,9 +687,11 @@ route("GET", "/public/listings", "public", async (c) => {
 });
 
 route("GET", "/public/listings/:id", "public", async (c) => {
-  const row = await queryPublicListing(c.cfg.db, c.params.id);
-  if (!row) throw new HttpError(404, "not_found", "Listing not found");
-  return json(row, 200, { ...PUBLIC_CACHE, ...c.cors });
+  // The JSON API answers by id, current slug or old slug alike (pages redirect; the API stays compatible).
+  let found = await resolvePublicListing(c.cfg.db, c.params.id);
+  if (found && "redirect" in found) found = await resolvePublicListing(c.cfg.db, found.redirect);
+  if (!found || !("listing" in found)) throw new HttpError(404, "not_found", "Listing not found");
+  return json(found.listing, 200, { ...PUBLIC_CACHE, ...c.cors });
 });
 
 route("GET", "/public/settings", "public", async (c) => json(await queryPublicSettings(c.cfg.db), 200, { ...PUBLIC_CACHE, ...c.cors }));

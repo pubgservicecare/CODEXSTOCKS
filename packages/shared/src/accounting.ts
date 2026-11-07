@@ -1,6 +1,9 @@
 import { convertMinor, CURRENCIES, type Currency } from "./money";
 import { convertUsdPkr, isValidUsdPkrMicro, toPkrMinor, usdPkrFromSaleRate } from "./fx";
-import type { Account, Expense, Refund, Sale } from "./entities";
+import type { Account, Debt, Expense, InstallmentPlan, Payment, Refund, Sale } from "./entities";
+import { parseDebtAllocations } from "./debts";
+import { planStateOf } from "./receipt-data";
+import { localDate } from "./calendar";
 
 /**
  * PROFIT FORMULA (computed separately for each currency C — USD and PKR are never mixed):
@@ -23,6 +26,16 @@ import type { Account, Expense, Refund, Sale } from "./entities";
  *
  *   Inventory at cost (C) = Σ purchase cost of available + reserved accounts bought in C
  *
+ * INSTALLMENT SALES (plans): the sale is an ordinary sale at the ORIGINAL price, so it is counted ONCE, when
+ * it was sold. Collecting the advance and the qist is NOT new revenue. Only what the plan adds on top is
+ * extra profit, when it is actually collected:
+ *   + Daily Extra collected (C)   + Late fines collected (C)   − unpaid balance of cancelled plans written off (C)
+ * Cash view: an installment sale brings in the money actually received (advance, qist, Daily Extra, fines,
+ * overpayments), not the full price on the sale date:
+ *   Incoming (C) = Gross sales − installment sales + plan payments received
+ * Money to receive / to pay (personal or business) is never mixed into these books: only its interest or
+ * service charges count, in the consolidated PKR view (see below).
+ *
  * Voided sales are treated as never having happened. Deleted rows are ignored.
  */
 export interface CurrencyReport {
@@ -41,6 +54,12 @@ export interface CurrencyReport {
   inventoryValue: number;
   salesCount: number;
   missingRates: number;
+  /** Installment plans (in the plan currency). */
+  installmentSales: number;
+  planCollected: number;
+  planExtras: number;
+  planFines: number;
+  planWriteOffs: number;
 }
 
 export interface InventoryCounts {
@@ -66,6 +85,7 @@ function empty(currency: Currency): CurrencyReport {
   return {
     currency, grossSales: 0, refunds: 0, netSales: 0, costOfSold: 0, grossProfit: 0, expenses: 0, netProfit: 0,
     incoming: 0, outgoing: 0, purchases: 0, netCash: 0, inventoryValue: 0, salesCount: 0, missingRates: 0,
+    installmentSales: 0, planCollected: 0, planExtras: 0, planFines: 0, planWriteOffs: 0,
   };
 }
 
@@ -76,7 +96,7 @@ export function costInSaleCurrency(account: A, sale: S): number | null {
   return convertMinor(account.purchase_cost_minor, sale.exchange_rate_micro);
 }
 
-export function computeReport(input: { accounts: A[]; sales: S[]; refunds: R[]; expenses: X[] }): FinancialReport {
+export function computeReport(input: { accounts: A[]; sales: S[]; refunds: R[]; expenses: X[]; plans?: InstallmentPlan[]; payments?: Payment[]; asOf?: string }): FinancialReport {
   const by = Object.fromEntries(CURRENCIES.map((c) => [c, empty(c)])) as Record<Currency, CurrencyReport>;
   const counts: InventoryCounts = { total: 0, available: 0, reserved: 0, sold: 0, archived: 0, published: 0 };
   const accounts = new Map<string, A>();
@@ -118,16 +138,69 @@ export function computeReport(input: { accounts: A[]; sales: S[]; refunds: R[]; 
     by[e.currency].expenses += e.amount_minor;
   }
 
+  for (const pl of planFigures(input.plans ?? [], input.payments ?? [], liveSales, input.asOf)) {
+    const r = by[pl.plan.currency];
+    r.installmentSales += pl.saleAmount;
+    r.planCollected += pl.received;
+    r.planExtras += pl.extras;
+    r.planFines += pl.fines;
+    r.planWriteOffs += pl.writeOff;
+  }
+
   for (const c of CURRENCIES) {
     const r = by[c];
     r.netSales = r.grossSales - r.refunds;
     r.grossProfit = r.netSales - r.costOfSold;
-    r.netProfit = r.grossProfit - r.expenses;
-    r.incoming = r.grossSales;
+    r.netProfit = r.grossProfit - r.expenses + r.planExtras + r.planFines - r.planWriteOffs;
+    r.incoming = r.grossSales - r.installmentSales + r.planCollected;
     r.outgoing = r.purchases + r.expenses + r.refunds;
     r.netCash = r.incoming - r.outgoing;
   }
   return { counts, byCurrency: by };
+}
+
+interface PlanFigures {
+  plan: InstallmentPlan;
+  /** Amount of its sale (plan currency); 0 when the sale was voided. */
+  saleAmount: number;
+  received: number;
+  extras: number;
+  fines: number;
+  writeOff: number;
+  credit: number;
+  payments: Payment[];
+}
+
+/**
+ * Per-plan figures in the plan currency, from the engine — so Daily Extra that an early payoff cancelled
+ * counts as customer credit, not income.
+ */
+export function planFigures(
+  plans: InstallmentPlan[],
+  payments: Payment[],
+  liveSales: Map<string, Pick<Sale, "id" | "amount_minor">>,
+  asOf?: string,
+): PlanFigures[] {
+  const out: PlanFigures[] = [];
+  const day = asOf ?? localDate();
+  for (const plan of plans) {
+    if (plan.deleted) continue;
+    const sale = liveSales.get(plan.sale_id);
+    const mine = payments.filter((p) => !p.deleted && p.plan_id === plan.id);
+    const at = plan.status === "cancelled" && plan.cancelled_on && plan.cancelled_on < day ? plan.cancelled_on : day;
+    const state = planStateOf(plan, mine, at);
+    out.push({
+      plan,
+      saleAmount: sale ? sale.amount_minor : 0,
+      received: state.totals.received,
+      extras: state.totals.paid_extra,
+      fines: state.totals.paid_fine,
+      writeOff: plan.status === "cancelled" && sale ? state.totals.remaining_principal : 0,
+      credit: state.totals.credit,
+      payments: mine.filter((p) => p.status === "recorded"),
+    });
+  }
+  return out;
 }
 
 /* ------------------------------------------------------------------ */
@@ -163,7 +236,17 @@ export interface ConsolidatedReport {
   outgoing: number;
   netCash: number;
   inventoryValue: number;
-  excluded: { sales: number; refunds: number; costs: number; purchases: number; expenses: number };
+  /** Installment plans and money owed, PKR (each at its recorded rates). */
+  installmentSales: number;
+  planCash: number;
+  planExtras: number;
+  planFines: number;
+  planWriteOffs: number;
+  /** Overpayments held for customers — owed back or to be used, never income. */
+  customerCredit: number;
+  debtChargesIn: number;
+  debtChargesOut: number;
+  excluded: { sales: number; refunds: number; costs: number; purchases: number; expenses: number; payments: number };
 }
 
 type FA = A & Partial<Pick<Account, "purchase_fx_micro" | "purchased_at" | "created_at">>;
@@ -180,11 +263,31 @@ export function saleUsdPkr(sale: FS, account: Pick<Account, "purchase_currency">
 interface PkrEvent {
   at: string;
   pkr: number;
+  /** A sale made on installments (its money arrives as plan payments). */
+  plan?: boolean;
 }
 
-function toPkrEvents(input: { accounts: FA[]; sales: FS[]; refunds: FR[]; expenses: FX[] }) {
-  const ev = { sales: [] as PkrEvent[], refunds: [] as PkrEvent[], purchases: [] as PkrEvent[], expenses: [] as PkrEvent[] };
-  const excluded = { sales: 0, refunds: 0, costs: 0, purchases: 0, expenses: 0 };
+export interface ConsolidationInput {
+  accounts: FA[];
+  sales: FS[];
+  refunds: FR[];
+  expenses: FX[];
+  plans?: InstallmentPlan[];
+  payments?: Payment[];
+  debts?: Debt[];
+  asOf?: string;
+}
+
+/** PKR value of a payment at ITS recorded rate (null when a non-PKR payment has no PKR rate). */
+export function paymentPkr(p: Pick<Payment, "amount_minor" | "currency" | "pkr_micro">): number | null {
+  if (p.currency === "PKR") return p.amount_minor;
+  return p.pkr_micro && p.pkr_micro > 0 ? convertMinor(p.amount_minor, p.pkr_micro) : null;
+}
+
+function toPkrEvents(input: ConsolidationInput) {
+  const ev = { sales: [] as PkrEvent[], refunds: [] as PkrEvent[], purchases: [] as PkrEvent[], expenses: [] as PkrEvent[], planCash: [] as PkrEvent[] };
+  const excluded = { sales: 0, refunds: 0, costs: 0, purchases: 0, expenses: 0, payments: 0 };
+  const planSales = new Set((input.plans ?? []).filter((p) => !p.deleted).map((p) => p.sale_id));
   const accounts = new Map<string, FA>();
   let costOfSold = 0;
   let inventoryValue = 0;
@@ -207,7 +310,7 @@ function toPkrEvents(input: { accounts: FA[]; sales: FS[]; refunds: FR[]; expens
     live.set(s.id, rate);
     const pkr = toPkrMinor(s.amount_minor, s.currency, rate);
     if (pkr === null) excluded.sales++;
-    else ev.sales.push({ at: s.sold_at ?? "", pkr });
+    else ev.sales.push({ at: s.sold_at ?? "", pkr, plan: planSales.has(s.id) });
     if (s.status === "completed" && acct) {
       const cost = toPkrMinor(acct.purchase_cost_minor, acct.purchase_currency, rate ?? acct.purchase_fx_micro);
       if (cost === null) excluded.costs++;
@@ -226,23 +329,83 @@ function toPkrEvents(input: { accounts: FA[]; sales: FS[]; refunds: FR[]; expens
     if (pkr === null) excluded.expenses++;
     else ev.expenses.push({ at: e.incurred_at ?? "", pkr });
   }
-  return { ev, excluded, costOfSold, inventoryValue };
+
+  // Installment plans: cash as received, income only from Daily Extra and fines, write-offs of cancelled plans.
+  const plan = { extras: 0, fines: 0, writeOffs: 0, credit: 0 };
+  const salesById = new Map(input.sales.filter((s) => !s.deleted && s.status !== "voided").map((s) => [s.id, s]));
+  for (const f of planFigures(input.plans ?? [], input.payments ?? [], salesById, input.asOf)) {
+    const sale = salesById.get(f.plan.sale_id);
+    const saleRate = sale ? saleUsdPkr(sale, accounts.get(sale.account_id)) : null;
+    // PKR per plan-currency unit: the payments' own recorded rates (weighted), else the sale's rate.
+    let pkrSum = 0;
+    let creditedSum = 0;
+    let missing = false;
+    for (const p of f.payments) {
+      const pkr = paymentPkr(p);
+      if (pkr === null) {
+        missing = true;
+        excluded.payments++;
+        continue;
+      }
+      pkrSum += pkr;
+      creditedSum += p.credited_minor;
+      ev.planCash.push({ at: p.paid_on, pkr });
+    }
+    const toPkr = (v: number): number | null => {
+      if (!v) return 0;
+      if (f.plan.currency === "PKR") return v;
+      if (creditedSum > 0 && !missing) return Math.round((v * pkrSum) / creditedSum);
+      return toPkrMinor(v, f.plan.currency, saleRate);
+    };
+    for (const [k, v] of [["extras", f.extras], ["fines", f.fines], ["writeOffs", f.writeOff], ["credit", f.credit]] as const) {
+      const pkr = toPkr(v);
+      if (pkr === null) excluded.payments++;
+      else plan[k] += pkr;
+    }
+  }
+
+  // Money to receive / to pay: only interest or service charges count (income / cost); the principal never does.
+  const debt = { chargesIn: 0, chargesOut: 0 };
+  const debtById = new Map((input.debts ?? []).filter((d) => !d.deleted).map((d) => [d.id, d]));
+  for (const p of input.payments ?? []) {
+    if (p.deleted || p.status !== "recorded" || p.target !== "debt" || !p.debt_id) continue;
+    const d = debtById.get(p.debt_id);
+    if (!d) continue;
+    const charge = parseDebtAllocations(p).filter((a) => a.part === "charge").reduce((a, x) => a + x.minor, 0);
+    if (!charge) continue;
+    const pkr = paymentPkr(p);
+    if (pkr === null) {
+      excluded.payments++;
+      continue;
+    }
+    const share = Math.round((pkr * charge) / p.credited_minor);
+    if (d.direction === "receive") debt.chargesIn += share;
+    else debt.chargesOut += share;
+  }
+  return { ev, excluded, costOfSold, inventoryValue, plan, debt };
 }
 
 const total = (xs: PkrEvent[]) => xs.reduce((n, x) => n + x.pkr, 0);
 
-export function computeConsolidated(input: { accounts: FA[]; sales: FS[]; refunds: FR[]; expenses: FX[] }): ConsolidatedReport {
-  const { ev, excluded, costOfSold, inventoryValue } = toPkrEvents(input);
+export function computeConsolidated(input: ConsolidationInput): ConsolidatedReport {
+  const { ev, excluded, costOfSold, inventoryValue, plan, debt } = toPkrEvents(input);
   const grossSales = total(ev.sales);
+  const installmentSales = total(ev.sales.filter((x) => x.plan));
   const refunds = total(ev.refunds);
   const expenses = total(ev.expenses);
   const purchases = total(ev.purchases);
+  const planCash = total(ev.planCash);
   const netSales = grossSales - refunds;
   const grossProfit = netSales - costOfSold;
   const outgoing = purchases + expenses + refunds;
+  const incoming = grossSales - installmentSales + planCash;
   return {
-    currency: "PKR", grossSales, refunds, netSales, costOfSold, grossProfit, expenses, netProfit: grossProfit - expenses,
-    incoming: grossSales, purchases, outgoing, netCash: grossSales - outgoing, inventoryValue, excluded,
+    currency: "PKR", grossSales, refunds, netSales, costOfSold, grossProfit, expenses,
+    netProfit: grossProfit - expenses + plan.extras + plan.fines - plan.writeOffs + debt.chargesIn - debt.chargesOut,
+    incoming, purchases, outgoing, netCash: incoming - outgoing, inventoryValue,
+    installmentSales, planCash, planExtras: plan.extras, planFines: plan.fines, planWriteOffs: plan.writeOffs,
+    customerCredit: plan.credit, debtChargesIn: debt.chargesIn, debtChargesOut: debt.chargesOut,
+    excluded,
   };
 }
 
@@ -259,7 +422,7 @@ export interface FlowBucket {
  * `months` are "YYYY-MM" keys. Both the PKR and the USD chart are drawn from this same series.
  */
 export function consolidatedMonthlyFlow(
-  input: { accounts: FA[]; sales: FS[]; refunds: FR[]; expenses: FX[] },
+  input: ConsolidationInput,
   months: string[],
 ): { buckets: FlowBucket[]; excluded: ConsolidatedReport["excluded"] } {
   const { ev, excluded } = toPkrEvents(input);
@@ -268,7 +431,9 @@ export function consolidatedMonthlyFlow(
     const b = m.get(at.slice(0, 7));
     if (b) b[k] += v;
   };
-  ev.sales.forEach((x) => add(x.at, "in", x.pkr));
+  // Money in: Instant Pay sales on their sale date; installment sales as their payments arrive (never both).
+  ev.sales.forEach((x) => !x.plan && add(x.at, "in", x.pkr));
+  ev.planCash.forEach((x) => add(x.at, "in", x.pkr));
   for (const list of [ev.purchases, ev.expenses, ev.refunds]) list.forEach((x) => add(x.at, "out", x.pkr));
   return { buckets: months.map((k) => m.get(k)!), excluded };
 }

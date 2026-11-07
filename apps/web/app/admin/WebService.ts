@@ -135,6 +135,25 @@ export function webService(username: string, opts: WebServiceOptions = {}): Data
       const { quote } = await api.fx().catch(() => ({ quote: null }));
       return quote ? { ...quote, status: fxStatus(quote, new Date()) } : null;
     },
+    async fxUsdt() {
+      const r = await api.fx().catch(() => null);
+      const usdt = r?.usdt ?? null;
+      return usdt ? { ...usdt, status: fxStatus(usdt, new Date()) } : null;
+    },
+    async openExternal(url) {
+      window.open(url, "_blank", "noopener,noreferrer");
+    },
+    async savePng(fileName, bytes) {
+      const url = URL.createObjectURL(new Blob([bytes as BlobPart], { type: "image/png" }));
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 10_000);
+      return true;
+    },
 
     vaultUnlocked: () => !!key,
     hasVault: async () => !!(await api.getVault()),

@@ -33,12 +33,14 @@ interface Draft {
   old_owner_whatsapp: string;
   show_old_owner_public: boolean;
   internal_notes: string;
+  seo_title: string;
+  seo_description: string;
 }
 
 const EMPTY: Draft = {
   title: "", purchase_cost: "", purchase_currency: "PKR", purchased_at: "", purchase_reference: "", list_price: "",
   list_currency: "PKR", description_public: "", youtube_url: "", old_owner_name: "", old_owner_whatsapp: "",
-  show_old_owner_public: false, internal_notes: "",
+  show_old_owner_public: false, internal_notes: "", seo_title: "", seo_description: "",
 };
 
 function fromAccount(a: Account): Draft {
@@ -56,6 +58,8 @@ function fromAccount(a: Account): Draft {
     old_owner_whatsapp: a.old_owner_whatsapp ?? "",
     show_old_owner_public: a.show_old_owner_public,
     internal_notes: a.internal_notes,
+    seo_title: a.seo_title ?? "",
+    seo_description: a.seo_description ?? "",
   };
 }
 
@@ -78,6 +82,8 @@ function toInput(d: Draft): AccountInput {
     old_owner_whatsapp: nz(d.old_owner_whatsapp),
     show_old_owner_public: d.show_old_owner_public,
     internal_notes: d.internal_notes,
+    seo_title: nz(d.seo_title),
+    seo_description: nz(d.seo_description),
   };
 }
 
@@ -308,6 +314,19 @@ export function AccountForm() {
               Show the previous owner's <b>name</b> on the website (their number is never public)
             </label>
           </div>
+          <details className="full seo-box">
+            <summary>Search & sharing (optional)</summary>
+            <p className="small muted">
+              Leave empty to use the defaults: <i>{(d.title.trim() || "Title")} | PUBG Account for Sale | CODE X STOCKS</i> and a summary of the description.
+              Shown in Google results and in WhatsApp link previews.
+            </p>
+            <Field label="Search title" optional hint={`${d.seo_title.length}/70 recommended`}>
+              <input value={d.seo_title} onChange={(e) => up({ seo_title: e.target.value })} maxLength={120} />
+            </Field>
+            <Field label="Search description" optional hint={`${d.seo_description.length}/160 recommended`}>
+              <textarea rows={2} value={d.seo_description} onChange={(e) => up({ seo_description: e.target.value })} maxLength={320} />
+            </Field>
+          </details>
         </div>
       </section>
 

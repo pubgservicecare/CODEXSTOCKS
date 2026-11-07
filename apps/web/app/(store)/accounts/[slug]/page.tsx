@@ -1,32 +1,63 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { notFound } from "next/navigation";
-import { listing, listings, settings } from "../../../../lib/public";
+import { notFound, permanentRedirect } from "next/navigation";
+import { listings, resolveListing, settings } from "../../../../lib/public";
 import { displayCurrency, storefrontFx } from "../../../../lib/currency";
+import { accountJsonLd, accountUrl, BRAND, jsonLdScript, ogImage, seoDescription, seoTitle } from "../../../../lib/seo";
 import { cardArt } from "../../art";
+import { ShareButton } from "../../ShareButton";
 import { Brackets, Description, Glyph, ListingCard, ListingMedia, Price, RateNote, WhatsAppButton, type PriceView } from "../../ui";
 
 export const dynamic = "force-dynamic";
 
-export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
-  const l = await listing((await params).id).catch(() => null);
-  if (!l) return { title: "Account not found" };
-  return { title: l.title, description: l.description.slice(0, 160), openGraph: l.image_url ? { images: [l.image_url] } : undefined };
+type Params = { params: Promise<{ slug: string }> };
+
+/**
+ * Public account page at /accounts/<readable-slug>. An old slug (the title changed) or an old id link answers
+ * with a permanent redirect to the current address, so shared links and search results keep working and only
+ * one canonical address is indexed. This route has no loading placeholder on purpose: the redirect is decided
+ * before anything is sent, so it is a real HTTP 308.
+ */
+export async function generateMetadata({ params }: Params): Promise<Metadata> {
+  const found = await resolveListing((await params).slug).catch(() => null);
+  if (!found || "redirect" in found) return { title: "Account not found", robots: { index: false } };
+  const l = found.listing;
+  const title = seoTitle(l);
+  const description = seoDescription(l);
+  const url = accountUrl(l.slug);
+  const img = ogImage(l);
+  return {
+    title: { absolute: title },
+    description,
+    alternates: { canonical: url },
+    openGraph: {
+      type: "website",
+      siteName: BRAND,
+      url,
+      title,
+      description,
+      images: [{ url: img.url, width: img.width, height: img.height, type: img.type, alt: l.image_url ? `Photo of ${l.title}` : `${BRAND} — PUBG Mobile accounts` }],
+    },
+    twitter: { card: "summary_large_image", title, description, images: [img.url] },
+  };
 }
 
-export default async function AccountPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
-  const [l, store, fx, display] = await Promise.all([listing(id), settings(), storefrontFx(), displayCurrency()]);
-  if (!l) notFound();
+export default async function AccountPage({ params }: Params) {
+  const { slug } = await params;
+  const found = await resolveListing(slug);
+  if (!found) notFound();
+  if ("redirect" in found) permanentRedirect(`/accounts/${found.redirect}`);
+  const l = found.listing;
+  const [store, fx, display] = await Promise.all([settings(), storefrontFx(), displayCurrency()]);
   const view: PriceView = { display: display.currency, fx };
-  const site = process.env.PUBLIC_SITE_URL || "https://codexstocks.org";
-  const url = `${site}/accounts/${l.id}`;
+  const url = accountUrl(l.slug);
   const ref = l.id.slice(-8).toUpperCase();
   const more = (await listings({ usdPkrMicro: fx?.usd_pkr_micro }).catch(() => [])).filter((x) => x.id !== l.id).slice(0, 3);
   const backdrop = l.image_url ? `${l.image_url}?tr=w-600,bl-30` : cardArt(l.id);
 
   return (
     <main className="detail">
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLdScript(accountJsonLd(l, ref)) }} />
       <div className="detail-backdrop-clip" aria-hidden="true">
         <div className="detail-backdrop" style={{ backgroundImage: `url(${backdrop})` }} />
       </div>
@@ -71,6 +102,7 @@ export default async function AccountPage({ params }: { params: Promise<{ id: st
             <RateNote fx={fx} />
             <div className="detail-buy">
               <WhatsAppButton big phone={store.whatsapp} listing={l} url={url} />
+              <ShareButton title={l.title} url={url} />
             </div>
             <ul className="assure">
               <li><Glyph name="shield" size={16} /> Hand-checked by the owner before listing</li>
@@ -107,6 +139,7 @@ export default async function AccountPage({ params }: { params: Promise<{ id: st
 
       <div className="mobile-buy">
         <Price l={l} view={view} size="bar" />
+        <ShareButton title={l.title} url={url} compact />
         <WhatsAppButton phone={store.whatsapp} listing={l} url={url} label="Enquire" />
       </div>
     </main>

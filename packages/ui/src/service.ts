@@ -11,6 +11,7 @@ import type {
   EntityRowMap,
   FinancialReport,
   FxQuote,
+  UsdtQuote,
 } from "@codex/shared";
 
 export type AccountListItem = Account & { link_count: number; sync_state?: string };
@@ -78,6 +79,12 @@ export interface DataService {
   exec<T = unknown>(name: CommandName, args: unknown): Promise<T>;
   /** Latest USD/PKR reference quote (desktop: cached for offline use), or null if none is available. */
   fx(): Promise<FxQuote | null>;
+  /** Latest USDT/PKR reference quote (CoinGecko via the server; desktop: cached), or null. */
+  fxUsdt?(): Promise<UsdtQuote | null>;
+  /** Save a generated image (receipts). Desktop: native save dialog; web: browser download. Returns false if cancelled. */
+  savePng?(fileName: string, bytes: Uint8Array): Promise<boolean>;
+  /** Open a WhatsApp or website link in the system browser (desktop); the website opens a new tab. */
+  openExternal?(url: string): Promise<void>;
 
   vaultUnlocked(): boolean;
   hasVault(): Promise<boolean>;

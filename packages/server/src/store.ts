@@ -3,6 +3,8 @@ import {
   ENTITY_FIELDS,
   isEntity,
   newId,
+  slugCandidates,
+  type Account,
   type Entity,
   type EntityRowMap,
   type EntityStore,
@@ -82,6 +84,17 @@ export class PgEntityStore implements EntityStore {
 
   async put<E extends Entity>(entity: E, row: EntityRowMap[E], prev: EntityRowMap[E] | null): Promise<EntityRowMap[E]> {
     assertEntity(entity);
+    if (entity === "accounts") {
+      const a = row as unknown as Account;
+      const slug = await chooseSlug(this.db, a.id, a.title, prev as unknown as Account | null);
+      const saved = await this.write(entity, { ...a, slug } as unknown as EntityRowMap[E], prev);
+      await recordSlug(this.db, slug, a.id, this.now());
+      return saved;
+    }
+    return this.write(entity, row, prev);
+  }
+
+  private async write<E extends Entity>(entity: E, row: EntityRowMap[E], prev: EntityRowMap[E] | null): Promise<EntityRowMap[E]> {
     const cols = columns(entity).filter((c) => c !== "rev");
     const values = cols.map((c) => (row as Record<string, unknown>)[c] ?? null);
     if (!prev) {
@@ -107,4 +120,45 @@ export class PgEntityStore implements EntityStore {
     if (!r.rows[0]) throw new ConflictError("This record was changed elsewhere. Reload to see the latest version.");
     return fromDb(entity, r.rows[0]);
   }
+}
+
+/* ------------------------------------------------------------------ */
+/* Readable account URLs                                               */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The server owns every account's slug. It stays the same while the title stays the same; a new title gets
+ * a new slug and the old one keeps redirecting (account_slugs remembers every slug ever given, so a slug is
+ * never handed to a different account).
+ */
+export async function chooseSlug(db: Db, id: string, title: string, prev: Pick<Account, "slug" | "title"> | null): Promise<string> {
+  if (prev?.slug && prev.title === title) return prev.slug;
+  const candidates = slugCandidates(title, id);
+  const r = await db.query<{ slug: string; account_id: string }>("SELECT slug, account_id FROM account_slugs WHERE slug = ANY($1)", [candidates]);
+  const owners = new Map(r.rows.map((x) => [x.slug, x.account_id]));
+  const taken = await db.query<{ slug: string }>("SELECT slug FROM accounts WHERE slug = ANY($1) AND id <> $2", [candidates, id]);
+  const live = new Set(taken.rows.map((x) => x.slug));
+  for (const c of candidates) if ((!owners.has(c) || owners.get(c) === id) && !live.has(c)) return c;
+  return `${candidates[0]}-${id.replace(/-/g, "").toLowerCase()}`;
+}
+
+export async function recordSlug(db: Db, slug: string, accountId: string, at: string): Promise<void> {
+  await db.query("INSERT INTO account_slugs (slug, account_id, created_at) VALUES ($1, $2, $3) ON CONFLICT (slug) DO NOTHING", [slug, accountId, at]);
+}
+
+/**
+ * Give a slug to accounts saved before slugs existed. The change is delivered to devices on their next pull
+ * (new change sequence) without bumping the revision, so it can never cause an edit conflict.
+ */
+export async function backfillSlugs(db: Db, now: Date = new Date()): Promise<number> {
+  return db.tx(async (tx) => {
+    await tx.query("SELECT pg_advisory_xact_lock($1)", [724002]);
+    const r = await tx.query<{ id: string; title: string }>("SELECT id, title FROM accounts WHERE slug IS NULL ORDER BY created_at LIMIT 1000");
+    for (const a of r.rows) {
+      const slug = await chooseSlug(tx, a.id, a.title, null);
+      await tx.query("UPDATE accounts SET slug = $1, change_seq = nextval('change_seq_global') WHERE id = $2 AND slug IS NULL", [slug, a.id]);
+      await recordSlug(tx, slug, a.id, now.toISOString());
+    }
+    return r.rows.length;
+  });
 }

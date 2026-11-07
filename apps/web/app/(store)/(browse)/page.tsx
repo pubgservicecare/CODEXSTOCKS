@@ -1,16 +1,23 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { whatsappLink } from "@codex/shared";
-import { listings, settings } from "../../lib/public";
-import { displayCurrency, storefrontFx } from "../../lib/currency";
-import { BACKDROPS, BRAND } from "./art";
-import { Armory } from "./Armory";
-import { Hero } from "./Hero";
-import { Story } from "./Story";
-import { Ticker } from "./Ticker";
-import { Glyph, ListingCard, RateNote, WhatsAppIcon, type PriceView } from "./ui";
+import { listings, settings } from "../../../lib/public";
+import { displayCurrency, storefrontFx } from "../../../lib/currency";
+import { BACKDROPS, BRAND } from "../art";
+import { Armory } from "../Armory";
+import { Hero } from "../Hero";
+import { Story } from "../Story";
+import { Ticker } from "../Ticker";
+import { Glyph, ListingCard, RateNote, WhatsAppIcon, type PriceView } from "../ui";
 
 export const dynamic = "force-dynamic";
+
+export const metadata: Metadata = {
+  alternates: { canonical: "/" },
+  openGraph: { url: "/", images: [{ url: "/og/codex-stocks-share.png", width: 1200, height: 630, type: "image/png" }] },
+  twitter: { card: "summary_large_image", images: ["/og/codex-stocks-share.png"] },
+};
 
 const PROOF = ["Hand-checked", "Honest listings", "Owner-confirmed handover", "PKR · USD prices", "Exact descriptions", "WhatsApp enquiries"];
 

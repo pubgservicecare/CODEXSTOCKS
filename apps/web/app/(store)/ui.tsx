@@ -141,7 +141,7 @@ export function ListingMedia({ l, w, h, eager, labelLong, index, fit }: { l: Pub
 export function ListingCard({ l, index = 0, view }: { l: PublicListing; index?: number; view?: PriceView }) {
   const first = l.description.split(/\r?\n/).find((x) => x.trim() !== "") ?? "";
   return (
-    <Link href={`/accounts/${l.id}`} className="acard" data-tilt data-reveal="card" style={{ ["--i" as string]: index % 8 }}>
+    <Link href={`/accounts/${l.slug}`} className="acard" data-tilt data-reveal="card" style={{ ["--i" as string]: index % 8 }}>
       <span className="acard-in">
       <span className="acard-media">
         <ListingMedia l={l} w={800} h={600} index={index} />

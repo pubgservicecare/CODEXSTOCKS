@@ -1,6 +1,6 @@
 import "server-only";
 import { cache } from "react";
-import { queryPublicListing, queryPublicListings, queryPublicSettings } from "@codex/server";
+import { queryPublicListing, queryPublicListings, queryPublicSettings, queryPublicSitemap, resolvePublicListing } from "@codex/server";
 import type { PublicListing, PublicSettings } from "@codex/shared";
 import { getDb } from "./server";
 
@@ -12,3 +12,10 @@ export async function listings(opts: { q?: string; currency?: string; sort?: str
 export const listing = cache(async (id: string): Promise<PublicListing | null> => queryPublicListing(await getDb(), id));
 
 export const settings = cache(async (): Promise<PublicSettings> => queryPublicSettings(await getDb()));
+
+/** Account page lookup: current slug -> listing; old slug or old id URL -> the slug to redirect to. */
+export const resolveListing = cache(async (key: string) => resolvePublicListing(await getDb(), key));
+
+export async function sitemapListings(): Promise<{ slug: string; updated_at: string }[]> {
+  return queryPublicSitemap(await getDb());
+}

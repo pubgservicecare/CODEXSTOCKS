@@ -1,14 +1,20 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { whatsappLink } from "@codex/shared";
-import { listings, settings } from "../../../lib/public";
-import { displayCurrency, storefrontFx } from "../../../lib/currency";
-import { BACKDROPS, BRAND } from "../art";
-import { FilterSheet } from "../FilterSheet";
-import { Glyph, ListingCard, RateNote, WhatsAppIcon, type PriceView } from "../ui";
+import { listings, settings } from "../../../../lib/public";
+import { displayCurrency, storefrontFx } from "../../../../lib/currency";
+import { BACKDROPS, BRAND } from "../../art";
+import { FilterSheet } from "../../FilterSheet";
+import { Glyph, ListingCard, RateNote, WhatsAppIcon, type PriceView } from "../../ui";
 
 export const dynamic = "force-dynamic";
-export const metadata: Metadata = { title: "All accounts", description: "Every PUBG Mobile account currently listed on CODE X STOCKS." };
+export const metadata: Metadata = {
+  title: "PUBG Mobile accounts for sale",
+  description: "Every PUBG Mobile account currently listed on CODE X STOCKS, with prices in PKR or USD. Hand-checked by the owner; enquire on WhatsApp.",
+  // Filters and searches (?q=, ?currency=, ?sort=) all point to the one inventory address.
+  alternates: { canonical: "/accounts" },
+  openGraph: { url: "/accounts", images: [{ url: "/og/codex-stocks-share.png", width: 1200, height: 630, type: "image/png" }] },
+};
 
 export default async function Inventory({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const sp = await searchParams;

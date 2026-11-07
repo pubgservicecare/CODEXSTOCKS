@@ -143,3 +143,122 @@ export function chooseDisplayCurrency(opts: { preference?: string | null; countr
 }
 
 export const otherCurrency = (c: Currency): Currency => (c === "USD" ? "PKR" : "USD");
+
+/* ------------------------------------------------------------------ */
+/* USDT (Tether) / PKR                                                 */
+/* ------------------------------------------------------------------ */
+
+/**
+ * USDT is a separate currency from USD. Its PKR rate comes from a crypto price provider (reference) or
+ * from the owner's own rate (e.g. the P2P rate actually used). USD amounts are NEVER turned into USDT 1:1.
+ */
+export const USDT_PAIR = "USDT/PKR";
+export const USDT_MIN_MICRO = 10_000_000; // 10 PKR per USDT
+export const USDT_MAX_MICRO = 10_000_000_000; // 10,000 PKR per USDT
+/** A manual USDT rate older than this is flagged so the owner updates it (days). */
+export const USDT_MANUAL_STALE_DAYS = 7;
+
+export interface UsdtQuote {
+  pair: typeof USDT_PAIR;
+  /** PKR per 1 USDT, x1e6. */
+  usdt_pkr_micro: number;
+  source: string;
+  source_url: string | null;
+  effective_at: string | null;
+  retrieved_at: string;
+  frequency: "daily" | "hourly" | "live" | "manual";
+  status: "fresh" | "stale";
+  /** True when this is the owner's own rate. */
+  manual: boolean;
+  note?: string | null;
+}
+
+export function isValidUsdtPkrMicro(v: unknown): v is number {
+  return typeof v === "number" && Number.isInteger(v) && v >= USDT_MIN_MICRO && v <= USDT_MAX_MICRO;
+}
+
+export function usdtPkrMicroFromNumber(rate: unknown): number {
+  if (typeof rate !== "number" || !Number.isFinite(rate) || rate <= 0) throw new FxError("Invalid USDT/PKR rate");
+  const micro = Math.round(rate * 1e6);
+  if (!isValidUsdtPkrMicro(micro)) throw new FxError("Invalid USDT/PKR rate");
+  return micro;
+}
+
+/** Owner-typed "PKR per 1 USDT", e.g. "281.50". */
+export function parseUsdtPkr(input: string): number {
+  const micro = parseRate(input);
+  if (!isValidUsdtPkrMicro(micro)) throw new FxError(`Enter a realistic rate in PKR per 1 USDT (between ${USDT_MIN_MICRO / 1e6} and ${USDT_MAX_MICRO / 1e6})`);
+  return micro;
+}
+
+export const formatUsdtPkr = (micro: number) => `1 USDT = ${formatRate(micro)} PKR`;
+
+/** PKR amount -> USDT at a PKR-per-USDT rate (display equivalents). Half away from zero. */
+export function pkrToUsdt(pkrMinor: number, usdtPkrMicro: number): number {
+  if (!isValidUsdtPkrMicro(usdtPkrMicro)) throw new FxError("Invalid USDT/PKR rate");
+  const a = BigInt(pkrMinor) * RATE_SCALE;
+  const r = BigInt(usdtPkrMicro);
+  const q = a / r;
+  const rem = a % r;
+  const twice = (rem < 0n ? -rem : rem) * 2n;
+  return Number(twice >= r ? q + (a < 0n ? -1n : 1n) : q);
+}
+
+export function usdtToPkr(usdtMinor: number, usdtPkrMicro: number): number {
+  if (!isValidUsdtPkrMicro(usdtPkrMicro)) throw new FxError("Invalid USDT/PKR rate");
+  return convertMinor(usdtMinor, usdtPkrMicro);
+}
+
+/** The USDT rate to use: the owner's rate when chosen (or as a fallback), otherwise the reference quote. */
+export function resolveUsdtQuote(o: {
+  provider: UsdtQuote | null;
+  manual: { rate_micro: number; effective_on: string; note: string | null; set_at: string } | null;
+  mode: string | null | undefined;
+  now: Date;
+}): UsdtQuote | null {
+  const manualQuote = (m: NonNullable<typeof o.manual>): UsdtQuote => ({
+    pair: USDT_PAIR,
+    usdt_pkr_micro: m.rate_micro,
+    source: "Your rate",
+    source_url: null,
+    effective_at: `${m.effective_on}T00:00:00.000Z`,
+    retrieved_at: m.set_at,
+    frequency: "manual",
+    status: (o.now.getTime() - Date.parse(`${m.effective_on}T00:00:00.000Z`)) / 86_400_000 > USDT_MANUAL_STALE_DAYS ? "stale" : "fresh",
+    manual: true,
+    note: m.note,
+  });
+  if (o.mode === "manual" && o.manual && isValidUsdtPkrMicro(o.manual.rate_micro)) return manualQuote(o.manual);
+  if (o.provider && isValidUsdtPkrMicro(o.provider.usdt_pkr_micro)) return { ...o.provider, status: fxStatus(o.provider, o.now) };
+  if (o.manual && isValidUsdtPkrMicro(o.manual.rate_micro)) return manualQuote(o.manual);
+  return null;
+}
+
+/** PKR per 1 unit of a payment currency from the current quotes (null when unknown). */
+export function pkrPerUnit(c: "PKR" | "USD" | "USDT", usd: FxQuote | null, usdt: UsdtQuote | null): number | null {
+  if (c === "PKR") return RATE_SCALE_NUMBER;
+  if (c === "USD") return usd && isValidUsdPkrMicro(usd.usd_pkr_micro) ? usd.usd_pkr_micro : null;
+  return usdt && isValidUsdtPkrMicro(usdt.usdt_pkr_micro) ? usdt.usdt_pkr_micro : null;
+}
+const RATE_SCALE_NUMBER = 1_000_000;
+
+/** Convert between PKR / USD / USDT through PKR with explicit rates (display only). */
+export function convertVia(amountMinor: number, from: "PKR" | "USD" | "USDT", to: "PKR" | "USD" | "USDT", fromPkr: number | null, toPkr: number | null): number | null {
+  if (from === to) return amountMinor;
+  if (!fromPkr || !toPkr) return null;
+  const pkr = from === "PKR" ? amountMinor : convertMinor(amountMinor, fromPkr);
+  if (to === "PKR") return pkr;
+  const a = BigInt(pkr) * RATE_SCALE;
+  const r = BigInt(toPkr);
+  const q = a / r;
+  const rem = a % r;
+  return Number((rem < 0n ? -rem : rem) * 2n >= r ? q + (a < 0n ? -1n : 1n) : q);
+}
+
+/** Rate of `to` units per 1 `from` unit (x1e6) from two PKR rates, e.g. USD per USDT. */
+export function crossRateMicro(fromPkr: number, toPkr: number): number {
+  const num = BigInt(fromPkr) * RATE_SCALE;
+  const r = BigInt(toPkr);
+  const q = num / r;
+  return Number((num % r) * 2n >= r ? q + 1n : q);
+}

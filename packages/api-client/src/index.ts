@@ -6,6 +6,7 @@ import type {
   Entity,
   FinancialReport,
   FxQuote,
+  UsdtQuote,
   ImageKitAuth,
   OpResult,
   PublicListing,
@@ -90,7 +91,7 @@ export class ApiClient {
   }
   /** Latest cached USD/PKR reference rate (public). */
   fx() {
-    return this.request<{ quote: FxQuote | null }>("GET", "/fx");
+    return this.request<{ quote: FxQuote | null; usdt?: UsdtQuote | null }>("GET", "/fx");
   }
   authStatus() {
     return this.request<{ owner_exists: boolean; setup_enabled: boolean }>("GET", "/auth/status");

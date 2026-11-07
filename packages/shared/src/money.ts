@@ -6,7 +6,15 @@
 export const CURRENCIES = ["USD", "PKR"] as const;
 export type Currency = (typeof CURRENCIES)[number];
 
-export const MINOR_DIGITS: Record<Currency, number> = { USD: 2, PKR: 2 };
+/**
+ * Currencies of payment records (installment payments, money to receive / to pay). USDT (Tether) is
+ * its own currency: it is never treated as USD and never converted 1:1 — only with a recorded USDT rate.
+ * Purchases, listings, Instant Pay sales and expenses keep using CURRENCIES.
+ */
+export const PAY_CURRENCIES = ["PKR", "USD", "USDT"] as const;
+export type PayCurrency = (typeof PAY_CURRENCIES)[number];
+
+export const MINOR_DIGITS: Record<PayCurrency, number> = { USD: 2, PKR: 2, USDT: 2 };
 export const MAX_MINOR = 10_000_000_000_000; // 100 billion major units — far above any realistic value
 
 /** Exchange rates are stored as integers scaled by 1e6 ("micro" units). */
@@ -18,7 +26,7 @@ export class MoneyError extends Error {}
  * Parse a user-typed amount ("1,250.5", "0", "12.30") into minor units.
  * Rejects negatives, more decimals than the currency supports, and garbage.
  */
-export function parseMoney(input: string, currency: Currency): number {
+export function parseMoney(input: string, currency: PayCurrency): number {
   const digits = MINOR_DIGITS[currency];
   const s = input.replace(/[,\s]/g, "");
   if (!/^\d+(\.\d+)?$/.test(s)) throw new MoneyError("Enter a valid non-negative amount, e.g. 1250 or 1250.50");
@@ -29,20 +37,21 @@ export function parseMoney(input: string, currency: Currency): number {
   return Number(minor);
 }
 
-/** Format minor units for display, e.g. 125050 USD -> "$1,250.50". */
-export function formatMoney(minor: number, currency: Currency): string {
+/** Format minor units for display, e.g. 125050 USD -> "$1,250.50", 18050 USDT -> "180.50 USDT". */
+export function formatMoney(minor: number, currency: PayCurrency): string {
   const digits = MINOR_DIGITS[currency];
   const neg = minor < 0;
   const abs = BigInt(Math.abs(minor));
   const base = 10n ** BigInt(digits);
   const whole = (abs / base).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
   const frac = (abs % base).toString().padStart(digits, "0");
+  if (currency === "USDT") return `${neg ? "-" : ""}${whole}.${frac} USDT`;
   const sym = currency === "USD" ? "$" : "Rs ";
   return `${neg ? "-" : ""}${sym}${whole}.${frac}`;
 }
 
 /** Plain decimal string for form inputs, e.g. 125050 -> "1250.50". */
-export function minorToDecimalString(minor: number, currency: Currency): string {
+export function minorToDecimalString(minor: number, currency: PayCurrency): string {
   const digits = MINOR_DIGITS[currency];
   const base = 10n ** BigInt(digits);
   const abs = BigInt(Math.abs(minor));

@@ -1,6 +1,6 @@
 import type { ApiConfig } from "./api";
 import type { Db } from "./db";
-import { fxConfigFromEnv } from "./fx";
+import { fxConfigFromEnv, usdtConfigFromEnv } from "./fx";
 
 const list = (v: string | undefined) =>
   (v ?? "")
@@ -34,5 +34,6 @@ export function configFromEnv(env: Record<string, string | undefined>, db: Db): 
     adminOrigins,
     cookieSecure: env.COOKIE_SECURE ? env.COOKIE_SECURE !== "false" : env.NODE_ENV === "production",
     fx: fxConfigFromEnv(env),
+    usdt: usdtConfigFromEnv(env),
   };
 }
